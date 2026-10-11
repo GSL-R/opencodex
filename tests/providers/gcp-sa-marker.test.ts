@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Buffer } from "node:buffer";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +16,8 @@ import { setProviderKeychainEntryFactoryForTests } from "../../src/providers/key
 import { loadConfig, saveConfig } from "../../src/config";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import * as destinationPolicy from "../../src/lib/destination-policy";
+import { providerEditorConfigDTO } from "../../src/server/auth-cors";
 
 const SERVICE_ACCOUNT_JSON = JSON.stringify({
   type: "service_account",
@@ -334,6 +336,48 @@ describe("addProviderApiKey with a pasted credential JSON", () => {
       await handleProviderCommand(["remove", "p", "--json"]);
       expect(loadConfig().providers.p).toBeUndefined();
       expect(keychainStore.size).toBe(0);
+    });
+
+    test.each(["PUT", "POST"])("management %s cleans replaced markers only after commit", async method => {
+      installFakeKeychain();
+      const config = makeConfig({ apiKey: "legacy-key" });
+      addProviderApiKey(config, "p", `${SERVICE_ACCOUNT_JSON}, ${SERVICE_ACCOUNT_JSON_2}`);
+      config.providers.fallback = { adapter: "openai-chat", baseUrl: "https://api.example.test/v1", apiKey: "fixture" };
+      saveConfig(config);
+      const resolver = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
+      try {
+        const { handleProviderRoutes } = await import("../../src/server/management/provider-routes");
+        const request = async (body: unknown, failSave = false) => {
+          const req = new Request("http://localhost/api/providers", {
+            method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+          });
+          return handleProviderRoutes({ req, url: new URL(req.url), config,
+            deps: { saveConfigPreservingClaudeCode: (next: OcxConfig) => {
+              if (failSave) throw new Error("fixture save refused");
+              saveConfig(next);
+            } },
+            convergeCodexCatalog: async () => ({ converged: true }),
+            syncClaudeAgentDefsBestEffort: async () => {},
+          } as unknown as import("../../src/server/management/context").ManagementContext);
+        };
+        const replacement = { adapter: "openai-chat", baseUrl: "https://replacement.example.test/v1", apiKey: "replacement" };
+        const baseline = providerEditorConfigDTO(loadConfig());
+        const next = structuredClone(baseline);
+        delete next.providers.p;
+        next.defaultProvider = "fallback";
+        const body = method === "PUT" ? { baseline, next } : { name: "p", provider: replacement };
+        if (method === "PUT") {
+          const refused = await request({ baseline: { ...baseline, defaultProvider: "fallback" }, next });
+          expect(refused?.status).toBe(409);
+        } else {
+          await expect(request(body, true)).rejects.toThrow("fixture save refused");
+        }
+        expect(keychainStore.size).toBe(2);
+        expect((await request(body))?.status).toBe(200);
+        expect(keychainStore.size).toBe(0);
+        if (method === "PUT") expect(loadConfig().providers.p).toBeUndefined();
+        else expect(loadConfig().providers.p!.apiKey).toBe("replacement");
+      } finally { resolver.mockRestore(); }
     });
 
     test("management provider removal cleans all removed GCP credentials", async () => {

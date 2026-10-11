@@ -1073,6 +1073,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       if (resolvedError) return jsonResponse({ error: resolvedError, code: "invalid_provider_destination" }, 400);
     }
 
+    let removedCredentials: string[] = [];
     const outcome = mutatePersistedConfig<ProviderEditorMutationValue>(persisted => {
       if (!isDeepStrictEqual(providerEditorConfigDTO(persisted), baselineResult.value)) {
         return {
@@ -1095,6 +1096,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
           initializeProviderModelSelection(name, provider, undefined, candidate.config);
         }
       }
+      removedCredentials = Object.values(persisted.providers).flatMap(providerGcpCredentialMarkers);
       persisted.defaultProvider = candidate.config.defaultProvider;
       persisted.providers = structuredClone(candidate.config.providers);
       persisted.disabledModels = candidate.config.disabledModels;
@@ -1120,6 +1122,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       return jsonResponse({ error: outcome.value.error, code: outcome.value.code }, outcome.value.status);
     }
 
+    cleanupRemovedGcpCredentials(removedCredentials);
     adoptProviderEditorCandidate(config, outcome.value.config);
     reconcileLiveStateStores();
     refreshConfigDerivedRegistries(outcome.value.config);
@@ -1357,7 +1360,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     const candidate = stripRegistryOnlyStaticHeaders(name, prov);
     const previous = Object.getOwnPropertyDescriptor(config.providers, name);
     const rollback = pinsOwned ? captureConfigTopLevelRollback(config, ["defaultProvider", "modelDiscovery", "disabledModels"]) : undefined;
-    let validationError: string | undefined;
+    let validationError: string | undefined, removedCredentials: string[] = [];
     withConfigMutationLockSync(() => {
       validationError = anthropicInstancePublicationError(name, candidate, config.providers[name]);
       if (validationError) return;
@@ -1375,6 +1378,11 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
             });
           }
         }
+        // Include the durable row: a prior failed save can leave the live row ahead of disk.
+        const durable = readConfigAdmissionSnapshot();
+        const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file"
+          && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
+        removedCredentials = [config.providers[name], durableProvider].flatMap(provider => provider ? providerGcpCredentialMarkers(provider) : []);
         config.providers[name] = candidate;
         if (body.setDefault === true) config.defaultProvider = name;
         (deps.saveConfigPreservingClaudeCode ?? save)(config);
@@ -1388,6 +1396,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       }
     });
     if (validationError !== undefined) return jsonResponse({ error: validationError }, 400);
+    cleanupRemovedGcpCredentials(removedCredentials);
     reconcileLiveStateStores();
     if (prov.apiKey && prov.apiKeyPool) {
       const { addProviderApiKey } = await import("../../providers/api-keys");
