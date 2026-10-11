@@ -1858,7 +1858,10 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // Deleting still succeeds; the response names the shadow-call target left without a provider.
     const shadowDependency = shadowInterceptProviderDependency(config, name);
     if (fallbackDefault) config.defaultProvider = fallbackDefault;
-    const removedCredentials = providerGcpCredentialMarkers(config.providers[name]!);
+    const durable = readConfigAdmissionSnapshot();
+    const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file"
+      && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
+    const removedCredentials = [config.providers[name], durableProvider].flatMap(provider => provider ? providerGcpCredentialMarkers(provider) : []);
     delete config.providers[name];
     const { dropProviderCustomModels } = await import("../../providers/provider-id-rewrite");
     const droppedCustomModels = dropProviderCustomModels(config, name);
