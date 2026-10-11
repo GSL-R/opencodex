@@ -1,4 +1,8 @@
 {
+    "gcp-sa-marker.test.ts": "adapters/google",
+    "gcp-sa-adapter.test.ts": "adapters/google",
+    "management-gcp-credential-input.test.ts": "server",
+
     "messages-request-id-headers.test.ts": "claude-integration",
     "messages-request-id-endpoint.test.ts": "claude-integration",
   "anthropic-revoked-token.test.ts": "adapters/anthropic",

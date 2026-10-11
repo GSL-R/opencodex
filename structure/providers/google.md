@@ -6,6 +6,11 @@
 An empty or whitespace-only account is rejected before token resolution; it never selects host ADC.
 `src/providers/api-keys.ts` stores pasted credential JSON as markers, including multiple JSON objects
 in one atomic pool update. Failed batches remove only newly created, unreferenced secrets.
+The dedicated key-pool endpoint owns JSON ingestion. Provider POST/create/overwrite and CLI add
+reject raw JSON in active keys or submitted pool entries before saving; mixed JSON/literal-key
+bulk pastes are rejected before any store writes. OS-store failures return a fixed error without
+credential material. `src/server/management/provider-routes.ts` and `src/cli/provider.ts` enforce
+this admission through `providerCredentialInputError` in `src/providers/api-keys.ts`.
 `src/providers/gcp-credential-cleanup.ts` cleans removed markers after config persistence, under the
 config mutation lock, retaining credentials still referenced by any persisted provider.
 

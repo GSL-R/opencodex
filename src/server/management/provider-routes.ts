@@ -2,6 +2,7 @@ import { contextTierRecordConfigError, modelCapabilitiesConfigError, mergeModelC
 import { DECLARABLE_HOSTED_TOOL_TYPES } from "../../responses/hosted-tool-policy";
 import { randomUUID } from "node:crypto";
 import { cleanupRemovedGcpCredentials, providerGcpCredentialMarkers } from "../../providers/gcp-credential-cleanup";
+import { providerCredentialInputError } from "../../providers/api-keys";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import type { CatalogModel } from "../../codex/catalog";
@@ -1140,16 +1141,15 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     return jsonResponse({ success: true, catalogRefresh });
   }
 
-  // Add (or overwrite) a single provider. Merges into the live in-memory config and
-  // persists — existing providers' real keys are never round-tripped (unlike PUT /api/config,
-  // which would re-save the masked keys from GET). Live routing picks it up immediately.
+  // Provider POST merges directly; existing secrets never round-trip through masked DTOs.
   if (url.pathname === "/api/providers" && req.method === "POST") {
     let body: { name?: unknown; provider?: unknown; setDefault?: boolean };
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!isPlainRecord(body.provider)) return jsonResponse({ error: "provider must be a plain object" }, 400);
-    // Same prohibition as PATCH: the canonical OpenAI row never carries these fields, and a clear
-    // form would otherwise be normalized away before the merged-row guard could see it.
+    const credentialError = providerCredentialInputError(body.provider);
+    if (credentialError) return jsonResponse({ error: credentialError }, 400);
+    // Reject canonical-row clears before normalization hides their ownership.
     if (name === "openai" && (Object.hasOwn(body.provider, "autoReviewModel") || Object.hasOwn(body.provider, "autoReviewModelOverrides"))) {
       return jsonResponse({ error: "provider openai must not include autoReviewModel or autoReviewModelOverrides" }, 400);
     }

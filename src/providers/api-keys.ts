@@ -54,6 +54,9 @@ export function splitCredentialPaste(value: string): Array<string | { credential
   if (!trimmed) return [];
   // Fast path: a plain key (no JSON braces) — also covers env/keychain/gcp-sa references.
   if (!trimmed.startsWith("{")) {
+    if (/(?:^|[\s,])\{/.test(trimmed)) {
+      throw new Error("Mixing credential JSON and literal API keys in one paste is not supported. Add them separately.");
+    }
     if (/^(?:[A-Za-z]:[\\/]|[\\/]|~[\\/]|\.{1,2}[\\/])/.test(trimmed) || /^[^\s{}]+\.json$/i.test(trimmed)) {
       throw new Error("This looks like a file path. Paste the full JSON body of the credential, not a file path.");
     }
@@ -122,7 +125,7 @@ export function splitCredentialPaste(value: string): Array<string | { credential
   // trailing garbage (`<json> garbage`) is rejected rather than silently kept.
   const tailGap = trimmed.slice(spans[spans.length - 1]!.end + 1);
   if (!/^[\s,]*$/.test(tailGap)) {
-    throw new Error("Unrecognized credential JSON: unexpected content after the last JSON object. Paste credential JSON(s) separated by commas or newlines, or a plain API key.");
+    throw new Error("Unrecognized credential JSON: unexpected content after the last JSON object. Mixing JSON and literal keys is not supported; add them separately.");
   }
   return objects.map((json) => {
     if (!parseGcpCredentialJson(json)) {
@@ -130,6 +133,23 @@ export function splitCredentialPaste(value: string): Array<string | { credential
     }
     return { credentialJson: json };
   });
+}
+
+/** Generic provider writes do not own the keychain transaction. Refuse before persistence. */
+export function providerCredentialInputError(provider: { apiKey?: unknown; apiKeyPool?: unknown }): string | undefined {
+  const values = [provider.apiKey, ...(Array.isArray(provider.apiKeyPool)
+    ? provider.apiKeyPool.map(entry => entry && typeof entry === "object" ? entry.key : undefined) : [])];
+  try {
+    for (const value of values) {
+      if (typeof value !== "string") continue;
+      if (splitCredentialPaste(value).some(part => typeof part !== "string")) {
+        return "Credential JSON must be added through the provider API-key pool endpoint (/api/providers/keys), after creating the provider without a key. Nothing was saved.";
+      }
+    }
+  } catch (error) {
+    return error instanceof Error ? error.message : "Invalid credential paste";
+  }
+  return undefined;
 }
 
 /**
@@ -257,7 +277,7 @@ export function addProviderApiKey(config: OcxConfig, name: string, key: string, 
         return { error: "provider selection unavailable" };
       } catch (error) {
         cleanupRemovedGcpCredentials(created);
-        return { error: error instanceof Error ? error.message : "credential storage failed" };
+        return { error: "credential storage failed; configuration was not changed" };
       }
     }
   } catch (error) {

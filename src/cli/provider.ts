@@ -16,6 +16,7 @@ import { providerConfigSeed } from "../providers/derive";
 import { assertAnthropicInstanceLoginConfig } from "../oauth/store-anthropic-instance";
 import { dropProviderCustomModels } from "../providers/provider-id-rewrite";
 import { cleanupRemovedGcpCredentials, providerGcpCredentialMarkers } from "../providers/gcp-credential-cleanup";
+import { providerCredentialInputError } from "../providers/api-keys";
 import type { OcxProviderConfig } from "../types";
 import { findLiveProxy } from "../server/proxy-liveness";
 import { syncModelsToCodex } from "../codex/sync";
@@ -250,6 +251,12 @@ async function handleAdd(args: string[], deps: ProviderCommandDeps): Promise<voi
   }
 
   if (responsesPath !== undefined) provConfig.responsesPath = responsesPath;
+  const credentialError = providerCredentialInputError(provConfig);
+  if (credentialError) {
+    console.error(`Error: ${credentialError}`);
+    process.exitCode = 2;
+    return;
+  }
   if (authMode !== undefined) provConfig.authMode = authMode as OcxProviderConfig["authMode"];
   if (name === "anthropic2") {
     if (provConfig.adapter !== "anthropic" || provConfig.authMode !== "oauth") delete provConfig.anthropicOAuthInstance;

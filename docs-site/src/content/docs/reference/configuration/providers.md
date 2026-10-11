@@ -1412,11 +1412,16 @@ model key.
 
 ## Storing keys in the OS keychain
 
-For Vertex, the API-key input also accepts complete GCP `service_account` or `authorized_user`
-credential JSON. Paste the JSON contents, not a Windows, Unix, or relative file path. Multiple
+For Vertex, the dedicated API-key pool input (`POST /api/providers/keys`) accepts complete GCP
+`service_account` or `authorized_user` credential JSON after the provider has been created.
+The provider create/edit form and `ocx provider add --api-key` refuse credential JSON before
+saving: create the provider without a key, then add the JSON through its key pool. Paste the
+JSON contents, not a Windows, Unix, or relative file path. Multiple
 JSON objects separated by commas or whitespace are stored together as separate pool entries;
 the first becomes active. Configuration contains only `gcp-sa:<account>` references, never the
-credential JSON. Empty marker accounts are invalid and do not fall back to host credentials.
+credential JSON. Mixed JSON/literal-key bulk pastes are rejected as a whole; add literal keys
+separately. Storage failures leave the configuration unchanged and report a fixed error without
+echoing credential material. Empty marker accounts are invalid and do not fall back to host credentials.
 Removing a key or provider deletes its unreferenced GCP credentials after the configuration is
 saved; a credential referenced by another provider is retained. If OS-store cleanup fails, a
 warning requests manual inspection without undoing the committed configuration removal.
