@@ -14,6 +14,7 @@ import { projectLinkStatus, type LinkStatusDto } from "../../link/status-project
 import { isLinkPort } from "../../link/ports";
 import { joinHome, type ClientLinkJoinDeps } from "../../client/link-join";
 import { clientLinkTunnelStatus } from "../../client/link-tunnel";
+import { withConfigMutationLockSync } from "../../config/mutation-lock";
 import type { ManagementContext } from "./context";
 import { readManagementJsonBodyOr } from "./body";
 import { issueApiKeyInProcess, revokeApiKeyInProcess, type IssuedApiKey } from "./oauth-account-routes";
@@ -228,10 +229,12 @@ async function compensateNewLink(ctx: ManagementContext, state: LinkRouteState, 
   if (!revoked) {
     try { await state.supervisor.stopLink(record.id); } catch { /* retain the record and failure marker */ }
     try {
-      const current = readStoreFor(ctx);
-      if (!current.links.some(link => link.id === record.id)) {
-        writeStoreFor(ctx, { ...current, links: [...current.links, record] });
-      }
+      withConfigMutationLockSync(() => {
+        const current = readStoreFor(ctx);
+        if (!current.links.some(link => link.id === record.id)) {
+          writeStoreFor(ctx, { ...current, links: [...current.links, record] });
+        }
+      });
     } catch {
       // The in-memory marker still makes the residual visible when persistence is unavailable.
     }
@@ -239,11 +242,16 @@ async function compensateNewLink(ctx: ManagementContext, state: LinkRouteState, 
   }
   try { await state.supervisor.stopLink(record.id); } catch { return compensationFailure(ctx, state, record, "stop"); }
   try {
-    const current = readStoreFor(ctx);
-    const next = { ...current, links: current.links.filter(link => link.id !== record.id) };
-    if (next.links.length !== current.links.length) {
-      writeStoreFor(ctx, next);
-    }
+    // Read→filter→write stays one section of the shared mutation lock: a sibling
+    // route's create must not land between the read and the rename and vanish.
+    const next = withConfigMutationLockSync(() => {
+      const current = readStoreFor(ctx);
+      const filtered = { ...current, links: current.links.filter(link => link.id !== record.id) };
+      if (filtered.links.length !== current.links.length) {
+        writeStoreFor(ctx, filtered);
+      }
+      return filtered;
+    });
     clearCompensationFailed(record.id, compensationPath());
     state.compensationFailures?.delete(record.id);
     if (next.links.length === 0) await state.listener.close();
@@ -362,14 +370,20 @@ async function apply(ctx: ManagementContext, state: LinkRouteState): Promise<Res
   const record = { id, alias: body.alias, direction: "hub-initiated" as const, hostKeyFingerprint: confirmed.fingerprint, tunnelPort: remotePort, apiKeyId: issued.id, createdAt: new Date((ctx.deps.now ?? Date.now)()).toISOString() };
   let store: LinkStore;
   try {
-    const current = readStoreFor(ctx);
-    if (current.links.some(link => link.alias === body.alias && link.direction === "hub-initiated")) {
+    // Duplicate-check and append under one mutation-lock section: two writers
+    // racing this check could otherwise both pass it and append, losing one link.
+    const writeOutcome = withConfigMutationLockSync((): "dup" | "written" => {
+      const current = readStoreFor(ctx);
+      if (current.links.some(link => link.alias === body.alias && link.direction === "hub-initiated")) return "dup";
+      store = { ...current, links: [...current.links, record] };
+      writeStoreFor(ctx, store);
+      return "written";
+    });
+    if (writeOutcome === "dup") {
       const compensation = await compensateNewLink(ctx, state, record);
       if (compensation) return compensation;
       return fail("link_exists", "A link for this alias already exists.", 409);
     }
-    store = { ...current, links: [...current.links, record] };
-    writeStoreFor(ctx, store);
     await state.listener.ensureStarted();
     if (state.listener.status().state !== "listening") {
       const compensation = await compensateNewLink(ctx, state, record);
@@ -430,13 +444,18 @@ async function issue(ctx: ManagementContext): Promise<Response> {
   const record = { id, alias: body.alias, direction: "client-initiated" as const, hostKeyFingerprint: null, tunnelPort: body.tunnelPort, apiKeyId: issued.id, createdAt: new Date((ctx.deps.now ?? Date.now)()).toISOString() };
   let failureCode = "link_issue_failed";
   try {
-    const current = readStoreFor(ctx);
-    if (current.links.some(link => link.id === id)) throw new Error("link id collision");
-    if (current.links.some(link => link.alias === body.alias && link.direction === "client-initiated")) {
+    // Same atomic duplicate-check+append as the hub-initiated branch.
+    const writeOutcome = withConfigMutationLockSync((): "dup" | "written" => {
+      const current = readStoreFor(ctx);
+      if (current.links.some(link => link.id === id)) throw new Error("link id collision");
+      if (current.links.some(link => link.alias === body.alias && link.direction === "client-initiated")) return "dup";
+      writeStoreFor(ctx, { ...current, links: [...current.links, record] });
+      return "written";
+    });
+    if (writeOutcome === "dup") {
       const compensation = await compensateNewLink(ctx, state, record);
       return compensation ?? fail("link_exists", "A link for this alias already exists.", 409);
     }
-    writeStoreFor(ctx, { ...current, links: [...current.links, record] });
     await state.listener.ensureStarted();
     if (state.listener.status().state !== "listening") {
       failureCode = "listener_unavailable";
@@ -506,6 +525,30 @@ async function handleJoin(ctx: ManagementContext, state: LinkRouteState): Promis
   }
 }
 
+/**
+ * Restart a Home-initiated link's tunnel now: the dashboard's Retry and `ocx link reconnect`.
+ * The supervisor stops the current ssh child, if any, forgets its backoff or failed state and
+ * spawns a fresh attempt; status then reports it like any other attempt.
+ */
+async function reconnect(ctx: ManagementContext, state: LinkRouteState, id: string): Promise<Response> {
+  if (!LINK_ID.test(id)) return fail("invalid_link_id", "The link id is invalid.", 400);
+  const record = readStoreFor(ctx).links.find(link => link.id === id);
+  if (!record) return fail("link_not_found", "The link was not found.", 404);
+  if (record.direction !== "hub-initiated") {
+    return fail("link_not_home_initiated", "Only a Home-initiated link has a tunnel this computer can restart.", 409);
+  }
+  try {
+    // A reverse forward may only target a port the link listener owns, as when a link is applied.
+    await state.listener.ensureStarted();
+    if (state.listener.status().state !== "listening") return fail("listener_unavailable", "The link listener is unavailable.", 503);
+    await state.supervisor.ensureStarted();
+    if (!await state.supervisor.reconnect(id)) return fail("link_unavailable", "The link tunnel could not be restarted.", 503);
+  } catch {
+    return fail("link_unavailable", "The link tunnel could not be restarted.", 503);
+  }
+  return Response.json({ linkId: id });
+}
+
 async function remove(ctx: ManagementContext, state: LinkRouteState, id: string): Promise<Response> {
   if (!LINK_ID.test(id)) return fail("invalid_link_id", "The link id is invalid.", 400);
   const current = readStoreFor(ctx);
@@ -514,38 +557,46 @@ async function remove(ctx: ManagementContext, state: LinkRouteState, id: string)
   const body = await readManagementJsonBodyOr(ctx.req, {});
   if (!isRecord(body) || Object.keys(body).some(key => key !== "force") || (body.force !== undefined && typeof body.force !== "boolean")) return fail("invalid_body", "force must be a boolean.", 400);
   const force = body.force === true;
-  await state.supervisor.stopLink(id);
-  const restartTunnel = async (): Promise<void> => {
-    try {
-      await state.supervisor.ensureStarted();
-      await state.supervisor.reload();
-    } catch (error) {
-      console.warn(`[link] tunnel restart failed linkId=${id}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-  if (!force && record.direction === "hub-initiated") {
-    try {
-      const result = await runnerFor(ctx).run(buildExecArgv({ alias: record.alias, argv: remoteOcxArgv(["disconnect"]), knownHostsFile: knownHostsFile(ctx) }), { timeoutMs: 30_000 });
-      if (result.code !== 0) {
-        await restartTunnel();
-        return fail("remote_disconnect_failed", "The remote client could not be disconnected.", 502, sshFailureHint(result.stderr));
-      }
-    } catch (error) {
-      await restartTunnel();
-      return fail("remote_disconnect_failed", "The remote client could not be disconnected.", 502, sshRunnerErrorHint(error));
-    }
-  }
-  if (!revokeKeyIdempotent(ctx, record.apiKeyId)) return fail("key_revoke_failed", "The link key could not be revoked.", 502);
-  let next: LinkStore;
+  const release = state.supervisor.holdLink?.(id);
   try {
-    const latest = readStoreFor(ctx);
-    next = { ...latest, links: latest.links.filter(link => link.id !== id) };
-    if (next.links.length !== latest.links.length) writeStoreFor(ctx, next);
-    clearCompensationFailed(id, compensationPath());
-  } catch { return fail("link_remove_failed", "The link record could not be removed.", 503); }
-  state.compensationFailures?.delete(id);
-  if (next.links.length === 0) await state.listener.close();
-  return Response.json({ linkId: id });
+    await state.supervisor.stopLink(id);
+    const restartTunnel = async (): Promise<void> => {
+      release?.();
+      try {
+        await state.supervisor.ensureStarted();
+        await state.supervisor.reload();
+      } catch (error) {
+        console.warn(`[link] tunnel restart failed linkId=${id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    if (!force && record.direction === "hub-initiated") {
+      try {
+        const result = await runnerFor(ctx).run(buildExecArgv({ alias: record.alias, argv: remoteOcxArgv(["disconnect"]), knownHostsFile: knownHostsFile(ctx) }), { timeoutMs: 30_000 });
+        if (result.code !== 0) {
+          await restartTunnel();
+          return fail("remote_disconnect_failed", "The remote client could not be disconnected.", 502, sshFailureHint(result.stderr));
+        }
+      } catch (error) {
+        await restartTunnel();
+        return fail("remote_disconnect_failed", "The remote client could not be disconnected.", 502, sshRunnerErrorHint(error));
+      }
+    }
+    if (!revokeKeyIdempotent(ctx, record.apiKeyId)) return fail("key_revoke_failed", "The link key could not be revoked.", 502);
+    let next: LinkStore;
+    try {
+      next = withConfigMutationLockSync(() => {
+        const latest = readStoreFor(ctx);
+        const filtered = { ...latest, links: latest.links.filter(link => link.id !== id) };
+        if (filtered.links.length !== latest.links.length) writeStoreFor(ctx, filtered);
+        return filtered;
+      });
+      clearCompensationFailed(id, compensationPath());
+    } catch { return fail("link_remove_failed", "The link record could not be removed.", 503); }
+    state.compensationFailures?.delete(id);
+    await state.supervisor.reload();
+    if (next.links.length === 0) await state.listener.close();
+    return Response.json({ linkId: id });
+  } finally { release?.(); }
 }
 
 export async function handleLinkRoutes(ctx: ManagementContext, suppliedState?: LinkRouteState): Promise<Response | null> {
@@ -614,6 +665,14 @@ export async function handleLinkRoutes(ctx: ManagementContext, suppliedState?: L
     const denied = auth(ctx, "admin");
     if (denied) return denied;
     return issue(ctx);
+  }
+  const reconnectPath = req.method === "POST" ? /^\/api\/link\/([^/]+)\/reconnect$/.exec(path) : null;
+  if (reconnectPath) {
+    const denied = auth(ctx, "either");
+    if (denied) return denied;
+    let id: string;
+    try { id = decodeURIComponent(reconnectPath[1]!); } catch { return fail("invalid_link_id", "The link id is invalid.", 400); }
+    return reconnect(ctx, state, id);
   }
   if (req.method === "DELETE" && path.startsWith("/api/link/")) {
     const denied = auth(ctx, "either");

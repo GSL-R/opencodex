@@ -3,7 +3,7 @@
 How OpenCodex Desktop puts its bundled `ocx` first on the user's PATH, how it records what it owns, and
 what it refuses to touch. The shell surrounding this feature (startup sequence, tray, update page) is
 described in [Desktop shell](desktop-shell.md); design history is in
-`devlog/_plan/261009_desktop_owned_path_cli/`.
+`devlog/_fin/261009_desktop_owned_path_cli/`.
 
 `desktop/src-tauri/src/cli_command.rs` schedules one blocking reconcile after launch-origin
 adoption, independently of proxy startup. Stable macOS apps, Windows installs and Linux deb
@@ -13,6 +13,9 @@ temporary, translocated, debug and unpackaged launches do not install it.
 `desktop/src-tauri/src/cli_command_record.rs` owns the private `.opencodex-desktop/cli.json`
 record (64 KiB cap), OS-backed lock and external pending journals with before/after digests.
 The record grants generated-file ownership only, never runtime, service or shutdown authority.
+Lock acquisition is nonblocking and excludes a second open in the same process. An owning guard
+explicitly unlocks before closing, including on failed opens: Unix releases the shared file
+description with `LOCK_UN`; Windows releases offset 0, length 1 with `UnlockFileEx`.
 An enabled record carries a validated host-platform bundle even on its first pending save;
 disabled intent wins over pending work. Invalid records and journal conflicts block mutation;
 unreferenced journals are deleted only under the lock after a valid (or absent) record read.

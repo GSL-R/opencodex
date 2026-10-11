@@ -1,3 +1,4 @@
+import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { classifyAnthropic429 } from "../../oauth/anthropic-rate-limit-policy";
 import { rotateAnthropicAccountOnResponseForInstance } from "../../oauth/anthropic-account-refusal";
 import { authorizeResendForRecovery } from "../../lib/request-resend-gate";
@@ -23,6 +24,7 @@ import {
   recordAttemptCredentialSource,
 } from "../request-log";
 import { clientCancelledResponse, readDisplaySafeErrorText, normalizeUpstreamErrorText } from "./core-errors";
+import { isTranslatorBudgetExceededError } from "../../lib/translator-budget";
 import { redactSecretString } from "../../lib/redact";
 import { rewriteUpstreamPolicyRefusal } from "./policy-refusal";
 import { withProviderRequestSlot } from "../../providers/request-pacing";
@@ -90,7 +92,8 @@ import {
 } from "../../providers/opencode-zen-rate-limit";
 import { planReasoningEffortDowngrade } from "../../providers/reasoning-metadata";
 import { consumeComboFailure } from "./core-combo-failure";
-import { streamingContextOverflowResponse, jsonContextOverflowResponse } from "./context-overflow";
+import { streamingContextOverflowResponse, jsonContextOverflowResponse, lateAttributionLimitResponse } from "./context-overflow";
+import { OllamaLateAttributionBudgetError } from "../../adapters/ollama-native";
 import { isFixedCodexAccount } from "./core-codex-account";
 import { recordSubagentQuotaFailureForThreadSpawn } from "../../codex/subagent-model-fallback";
 import {
@@ -134,12 +137,15 @@ export async function prepareAdapterExchange(
     | "transportToken"
     | "oauthDispatch"
     | "imageTierBias"
+    | "oauth401ReplayAttempted"
     | "isOAuth401ReplayProvider"
     | "sentOAuthSnapshot"
     | "refreshResolvedOAuthSelection"
     | "replayOAuthCredentialSnapshot"
     | "invalidateSameTargetRequest"
     | "resolveSelectionAdapter"
+    | "resolveCopilotSelection"
+    | "copilotRefusalResponse"
     | "anthropicInstance"
     | "currentAnthropicRouteDecision"
     | "anthropicRouteDecision"
@@ -156,6 +162,7 @@ export async function prepareAdapterExchange(
   responseEffects: Pick<ResponsesEffects, "cancelResponseCompletion" | "notifyResponseComplete" | "refreshRequestToolAliases">,
   sendBudgetState: Pick<
     ResponsesSendBudget,
+    | "adapterSendBudget"
     | "adapterDispatchBudget"
     | "noteAdapterPhysicalSend"
     | "noteAdapterRecoveryWithheld"
@@ -182,6 +189,8 @@ export async function prepareAdapterExchange(
     refreshResolvedOAuthSelection,
     invalidateSameTargetRequest,
     resolveSelectionAdapter,
+    resolveCopilotSelection,
+    copilotRefusalResponse,
     anthropicInstance,
     currentAnthropicRouteDecision,
     anthropicSessionKey,
@@ -199,6 +208,7 @@ export async function prepareAdapterExchange(
   } = requestState;
   const { cancelResponseCompletion, notifyResponseComplete, refreshRequestToolAliases } = responseEffects;
   const {
+    adapterSendBudget,
     adapterDispatchBudget,
     noteAdapterPhysicalSend,
     noteAdapterRecoveryWithheld,
@@ -222,6 +232,17 @@ export async function prepareAdapterExchange(
 
   const upstream = new AbortController();
   const cleanupUpstreamAbort = linkAbortSignal(upstream, options.abortSignal);
+  /** Contain replacement negotiation before adapter admission and release its upstream abort link. */
+  const resolveRotatedCopilotSelection = async (): Promise<Response | undefined> => {
+    try { await resolveCopilotSelection(parsed); }
+    catch (error) {
+      cleanupUpstreamAbort();
+      upstream.abort();
+      if ((options.abortSignal ?? req.signal).aborted) return clientCancelledResponse();
+      return copilotRefusalResponse(error)
+        ?? formatErrorResponse(502, "upstream_error", "GitHub Copilot Auto negotiation failed.");
+    }
+  };
   const connectMs = config.connectTimeoutMs ?? 200_000;
   // Bridge stall budget (seconds of silence before upstream_stall_timeout); the retry backoff
   // heartbeat interval is derived from it so the watchdog is always fed during deliberate waits.
@@ -322,6 +343,14 @@ export async function prepareAdapterExchange(
     cleanupUpstreamAbort();
     upstream.abort();
     if (options.abortSignal?.aborted) return clientCancelledResponse();
+    if (err instanceof OllamaLateAttributionBudgetError) return lateAttributionLimitResponse();
+    // An adapter can also throw the shared translator budget while sizing generated
+    // request content (e.g. Ollama late-tool attribution); keep its established 413.
+    if (isTranslatorBudgetExceededError(err)) {
+      return formatErrorResponse(413, "request_too_large", "request translation buffer exceeded the safe limit", {
+        code: "translation_buffer_limit",
+      });
+    }
     const msg = err instanceof Error ? err.message : String(err);
     return formatErrorResponse(400, "invalid_request_error", redactSecretString(msg));
   }
@@ -338,10 +367,15 @@ export async function prepareAdapterExchange(
    * is invisible to it and a missed bump would replay a request built with a stale key.
    */
 
+  const initialRecovery = route.providerName === "github-copilot"
+    ? sendBudgetState.pendingHopPermit?.sendClass === "auth-recovery" ? "oauth-account-429"
+      : transportState.oauth401ReplayAttempted ? "oauth-401" : undefined
+    : undefined;
   let upstreamResponse: Response;
+  let handoffPermit: ResponsesSendBudget["pendingHopPermit"];
   try {
     if (transportState.activeAdapter.fetchResponse) {
-      transportState.noteRoutedAttemptSend(inputTokenEstimate);
+      transportState.noteRoutedAttemptSend(inputTokenEstimate, initialRecovery);
       const producer = adapterDispatchBudget?.beginSpendProducer?.();
       try {
       upstreamResponse = await withProviderRequestSlot(route.providerName, route.provider, route.modelId, upstream.signal, pacingSlot =>
@@ -374,7 +408,22 @@ export async function prepareAdapterExchange(
       // reset-only semantics so combo failover hops on the first 5xx.
       const transientPolicy = transientRetryPolicyFor(route.provider);
       const resetPolicy = resetReplayPolicyFor(route.provider);
-      const compactPrepaid = options.compactionRecoveryAttempted ? sendBudgetState.pendingHopPermit : undefined;
+      // Rebook a native Copilot hop against the negotiated destination before dispatch.
+      // Raw externally counted permits settle through the retry helper's send reporter.
+      if (route.providerName === "github-copilot" && adapterSendBudget && sendBudgetState.pendingHopPermit
+        && sendBudgetState.pendingHopPermit.sendClass === "auth-recovery") {
+        const original = sendBudgetState.pendingHopPermit;
+        sendBudgetState.pendingHopPermit = undefined;
+        original.release();
+        const decision = adapterSendBudget.reserveDispatch({
+          sendClass: original.sendClass,
+          targetKey: `${route.providerName}|${builtInitialRequest.url}|${route.modelId}`,
+          countedExternally: true,
+        });
+        if (!decision.allowed) throw new SendBudgetExhaustedError(safeHostLabel(builtInitialRequest.url));
+        handoffPermit = decision.permit;
+      }
+      const compactPrepaid = handoffPermit ?? (options.compactionRecoveryAttempted ? sendBudgetState.pendingHopPermit : undefined);
       if (compactPrepaid) sendBudgetState.pendingHopPermit = undefined;
       let compactPrepaidUsed = false;
       // A combo-owned or compaction-prepaid send is settled by the physical-dispatch receipt
@@ -407,7 +456,7 @@ export async function prepareAdapterExchange(
             if (!compactPrepaid.use()) throw new SendBudgetExhaustedError(safeHostLabel(builtInitialRequest.url));
             compactPrepaidUsed = true;
           }
-          transportState.noteRoutedAttemptSend(inputTokenEstimate, recovery);
+          transportState.noteRoutedAttemptSend(inputTokenEstimate, recovery ?? initialRecovery);
           return fetchWithHeaderTimeout(builtInitialRequest.url, applyUpstreamRecoveryInit({
             method: builtInitialRequest.method,
             headers: builtInitialRequest.headers,
@@ -456,6 +505,11 @@ export async function prepareAdapterExchange(
     cleanupUpstreamAbort();
     upstream.abort();
     if (options.abortSignal?.aborted) return clientCancelledResponse();
+    const storageRefusal = spendLedgerStorageErrorResponse(err, logCtx);
+    if (storageRefusal) {
+      releaseCodexAuthContextProbeLease(admissionState.authCtx);
+      return storageRefusal;
+    }
     const refusal = err instanceof UpstreamRetryEvidenceError ? err.cause : err;
     const codexRefusal = mapCodexAuthContextErrorToResponse(unwrapUpstreamRetryEvidenceError(err), {
       now: Date.now(), accountSelector: route.codexAccountNamespace,
@@ -486,6 +540,7 @@ export async function prepareAdapterExchange(
     const msg = describeUpstreamConnectFailure(err, connectMs);
     return formatErrorResponse(502, "upstream_error", msg);
   } finally {
+    handoffPermit?.release();
     builtInitialRequest.releaseBodyObservation?.();
   }
 
@@ -509,7 +564,7 @@ export async function prepareAdapterExchange(
     // Console Go answers a transient 400 "Invalid upload request." for bodies it accepts
     // moments later; at most one byte-identical replay is allowed per request.
     const consoleGoUploadRetryGuard: { attempted: boolean } = { attempted: false };
-    let oauth401ReplayAttempted = false;
+    let oauth401ReplayAttempted = transportState.oauth401ReplayAttempted;
     let antigravityAuthRotationAttempted = false;
     // At most one reasoning-effort downgrade per request. This sits outside the recovery loop
     // below for the same reason the two guards above do: a guard declared inside it is reset by
@@ -561,11 +616,19 @@ export async function prepareAdapterExchange(
         } catch (err) {
           if (preserveFailureResponse && !options.abortSignal?.aborted) return { failed: preserveFailureResponse };
           // A rotated/rebuilt adapter build failure is a request-shaping error, not an
-          // upstream connect failure: tear the abort link down and map it as 400 (no 413
-          // translator-budget mapping here — that stays with parseRequest/buildToolBridgeMaps).
+          // upstream connect failure: tear the abort link down and map it as 400. A
+          // translator-budget refusal keeps its established 413 here as well — adapters
+          // can throw it while sizing generated content (e.g. Ollama late-tool
+          // attribution), not only parseRequest/buildToolBridgeMaps.
           cleanupUpstreamAbort();
           upstream.abort();
           if (options.abortSignal?.aborted) return { failed: clientCancelledResponse() };
+          if (err instanceof OllamaLateAttributionBudgetError) return { failed: lateAttributionLimitResponse() };
+          if (isTranslatorBudgetExceededError(err)) {
+            return { failed: formatErrorResponse(413, "request_too_large", "request translation buffer exceeded the safe limit", {
+              code: "translation_buffer_limit",
+            }) };
+          }
           const msg = err instanceof Error ? err.message : String(err);
           return { failed: formatErrorResponse(400, "invalid_request_error", redactSecretString(msg)) };
         }
@@ -692,6 +755,13 @@ export async function prepareAdapterExchange(
           retryRequest.releaseBodyObservation?.();
         }
       } catch (err) {
+        const storageRefusal = !options.abortSignal?.aborted && spendLedgerStorageErrorResponse(err, logCtx);
+        if (storageRefusal) {
+          cleanupUpstreamAbort();
+          upstream.abort();
+          releaseCodexAuthContextProbeLease(admissionState.authCtx);
+          return { failed: storageRefusal };
+        }
         const codexRefusal = !options.abortSignal?.aborted && mapCodexAuthContextErrorToResponse(unwrapUpstreamRetryEvidenceError(err), {
           now: Date.now(), accountSelector: route.codexAccountNamespace,
         });
@@ -793,7 +863,7 @@ export async function prepareAdapterExchange(
         && !oauth401ReplayAttempted
         && !sendBudgetExhausted()
       ) {
-        oauth401ReplayAttempted = true;
+        oauth401ReplayAttempted = transportState.oauth401ReplayAttempted = true;
         let refreshed: OAuthAccessSnapshot;
         try {
           refreshed = await refreshResolvedOAuthSelection(transportState.sentOAuthSnapshot);
@@ -864,7 +934,7 @@ export async function prepareAdapterExchange(
         if (route.providerName === "kiro") {
           parsed._kiroAuthContext = { ...(refreshed.kiro ?? {}) };
         }
-        const refreshedProvider = resolveProviderTransport(
+        let refreshedProvider = resolveProviderTransport(
           route.providerName,
           {
             ...route.provider,
@@ -877,6 +947,9 @@ export async function prepareAdapterExchange(
             : undefined,
         );
         route.provider = refreshedProvider;
+        const copilotRefusal = await resolveRotatedCopilotSelection();
+        if (copilotRefusal) return copilotRefusal;
+        refreshedProvider = route.provider;
         invalidateSameTargetRequest();
         transportState.activeAdapter = resolveSelectionAdapter(
           resolveWireProtocolOverride(route.providerName, route.modelId, refreshedProvider, inboundWire, route.staticPolicy),
@@ -929,6 +1002,8 @@ export async function prepareAdapterExchange(
         // until runtime cleanup (one per rotated key).
         try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
         route.provider = rotated;
+        const selectionFailure = await resolveRotatedCopilotSelection();
+        if (selectionFailure) return selectionFailure;
         invalidateSameTargetRequest();
         transportState.activeAdapter = resolveSelectionAdapter(
           resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy),
@@ -1075,6 +1150,8 @@ export async function prepareAdapterExchange(
         // until runtime cleanup (one per rotated key under a rate-limit storm).
         try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
         route.provider = rotated;
+        const selectionFailure = await resolveRotatedCopilotSelection();
+        if (selectionFailure) return selectionFailure;
         invalidateSameTargetRequest();
         transportState.activeAdapter = resolveSelectionAdapter(
           resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy),

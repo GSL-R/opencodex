@@ -280,6 +280,22 @@ API-key and custom forward destinations preserve their metadata. See [Responses 
 
 Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.md#lifecycle); malformed optional listener blocks follow [config loading](../config.md#config-surface).
 
+## Native-main refresh cancellation
+
+`src/codex/main-account.ts` takes the CODEX_HOME exclusive claim, then the
+per-grant refresh file lock. Caller cancellation can stop either wait and is
+checked before the token exchange starts. Once started, the exchange observes
+only the refresh's own 30-second timeout: success rotates and retires the old
+refresh token, so cancellation cannot discard the only live grant. Both locks
+await the callback through completion, including publication; aborting their
+wait signal does not release an acquired lock while the exchange runs.
+Successful refresh publishes access and refresh tokens and advances the
+credential mutation epoch before clearing grant rejection and applicable
+reauth quarantine, then throws the caller's abort reason if cancelled.
+Snapshot and identity checks still refuse an external auth writer, including
+when the caller also cancelled. Same-identity device reauth obtains a new login
+grant rather than rotating the existing grant and keeps its pre-publication fence.
+
 ## Manual account pause and resume
 
 Manual pause/resume in `src/codex/auth-api/account-pause-group.ts` resolves existing native-main
@@ -497,7 +513,7 @@ false. Exact-account and Direct routes are unchanged.
 
 ## Main-account policy observations
 
-Opted-in main-account credit renewal follows the [spendable credit contract](openai-tiers.md#spendable-codex-credits). The existing background sweep prepares a token before WHAM, rechecks eligibility, and uses a passive probe that neither sets nor clears needs-reauth, including after identity retries. Other probes keep their existing auth behavior. A non-passive caller joining renewal applies terminal-auth quarantine, or clears it on a successful explicit refresh, only while its credential and configuration fences remain current; shared evidence does not inherit the owner's passive intent.
+Opted-in main-account credit renewal follows the [spendable credit contract](openai-tiers.md#spendable-codex-credits). An unpaused, non-quarantined main identity with an exhausted included window keeps discovering credits even when its evidence is missing or unavailable; fresh positive evidence waits until three minutes of age for renewal. Admission remains blocked until fresh spendable evidence arrives, with the consented credit refusal's Retry-After bounded to five minutes. The existing background sweep prepares a token before WHAM, rechecks eligibility, and uses a passive probe that neither sets nor clears needs-reauth, including after identity retries. Other probes keep their existing auth behavior. A non-passive caller joining renewal applies terminal-auth quarantine, or clears it on a successful explicit refresh, only while its credential and configuration fences remain current; shared evidence does not inherit the owner's passive intent.
 
 The main-account admission policy defaults to 90% for short windows and 98% for long windows;
 `codexMainAccountHardLockThresholds` permits ordered integer thresholds from 80 through 100.
