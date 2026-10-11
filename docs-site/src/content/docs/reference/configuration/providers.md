@@ -1428,6 +1428,8 @@ warning requests manual inspection without undoing the committed configuration r
 Ordinary keychain store/restore actions leave GCP markers and JSON in the OS store. Restoring
 credential JSON through a `keychain:` alias is refused, and cleanup preserves accounts still
 referenced through either marker spelling.
+Credential writes and marker persistence share the cleanup transaction lock, so concurrent
+removal cannot delete the stored JSON between read-back and the marker commit.
 
 By default a provider's `apiKey` and `apiKeyPool` sit in `config.json` (mode 0600, atomic writes).
 If you would rather keep the key material out of the file, move it into the OS credential store:

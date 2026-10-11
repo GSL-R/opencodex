@@ -159,3 +159,62 @@ test("restore never publishes stored credential JSON through a keychain alias", 
   expect(secrets.get(`opencodex.provider-api-key.v1:${account}`)).toBe(credential);
   assertNoPlaintext();
 });
+
+test("credential re-add rebases and restores its payload after an overlapping last-reference removal", () => {
+  const original = addProviderApiKey(config, "relay", credential);
+  if ("error" in original) throw new Error(original.error);
+  const marker = config.providers.relay!.apiKey!;
+  const account = marker.slice("gcp-sa:".length);
+  let written = false;
+  let injectRemoval = true;
+  let removed = false;
+  setProviderKeychainEntryFactoryForTests((service, key) => ({
+    getPassword: () => {
+      const value = secrets.get(`${service}:${key}`) ?? null;
+      if (key === account && written && injectRemoval) {
+        injectRemoval = false;
+        removed = removeProviderApiKey(loadConfig(), "relay", original.id);
+      }
+      return value;
+    },
+    setPassword: value => { secrets.set(`${service}:${key}`, value); if (key === account) written = true; },
+    deletePassword: () => secrets.delete(`${service}:${key}`),
+  }));
+  expect(addProviderApiKey(config, "relay", credential)).toEqual(original);
+  expect(removed).toBe(true);
+  expect(loadConfig().providers.relay!.apiKey).toBe(marker);
+  expect(secrets.get(`opencodex.provider-api-key.v1:${account}`)).toBe(credential);
+  assertNoPlaintext();
+});
+
+test("a separate process cannot acquire the cleanup transaction during credential write/read-back", () => {
+  const original = addProviderApiKey(config, "relay", credential);
+  if ("error" in original) throw new Error(original.error);
+  const account = config.providers.relay!.apiKey!.slice("gcp-sa:".length);
+  let checked = false;
+  let blocked = false;
+  setProviderKeychainEntryFactoryForTests((service, key) => ({
+    getPassword: () => secrets.get(`${service}:${key}`) ?? null,
+    setPassword: value => {
+      secrets.set(`${service}:${key}`, value);
+      if (key !== account || checked) return;
+      checked = true;
+      const child = Bun.spawnSync([process.execPath, "-e", `
+        import { Database } from "bun:sqlite";
+        const db = new Database(process.argv[1]);
+        let blocked = false;
+        try { db.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE"); db.exec("ROLLBACK"); }
+        catch (error) { blocked = error.code === "SQLITE_BUSY"; }
+        finally { db.close(); }
+        console.log(JSON.stringify({ blocked }));
+      `, join(home, "config-mutation.sqlite")], { stdout: "pipe", stderr: "pipe" });
+      expect(child.exitCode).toBe(0);
+      blocked = JSON.parse(child.stdout.toString()).blocked;
+    },
+    deletePassword: () => secrets.delete(`${service}:${key}`),
+  }));
+  expect(addProviderApiKey(config, "relay", credential)).toEqual(original);
+  expect(checked).toBe(true);
+  expect(blocked).toBe(true);
+  assertNoPlaintext();
+});

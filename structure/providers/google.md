@@ -5,7 +5,9 @@
 `src/lib/gcp-adc.ts` resolves an explicit `gcp-sa:<account>` through the OS credential store.
 An empty or whitespace-only account is rejected before token resolution; it never selects host ADC.
 `src/providers/api-keys.ts` stores pasted credential JSON as markers, including multiple JSON objects
-in one atomic pool update. Failed batches remove only newly created, unreferenced secrets.
+in one atomic pool update. Verified OS writes and marker persistence share the cleanup mutation
+lock. Rebased callbacks repeat idempotent writes before committing; failed batches remove only
+newly created, unreferenced secrets.
 The dedicated key-pool endpoint owns JSON ingestion. Provider POST/create/overwrite and CLI add
 reject raw JSON in active keys or submitted pool entries before saving; mixed JSON/literal-key
 bulk pastes are rejected before any store writes. OS-store failures return a fixed error without

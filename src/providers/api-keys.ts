@@ -247,15 +247,18 @@ export function addProviderApiKey(config: OcxConfig, name: string, key: string, 
       const stored: Array<{ id: string; marker: string }> = [];
       const created: string[] = [];
       try {
-        for (const part of parts) {
-          const credentialJson = (part as { credentialJson: string }).credentialJson;
-          const id = apiKeyPoolEntryId(credentialJson);
-          const account = gcpCredentialStoreAccount(name, id);
-          const existedBefore = providerKeychainEntry(account).getPassword() !== null;
-          if (!existedBefore) created.push(`${GCP_CREDENTIAL_MARKER_PREFIX}${account}`);
-          stored.push({ id, marker: storeGcpCredentialJson(config, name, credentialJson, existedBefore) });
-        }
         const committed = commitProviderApiKeySelection(config, name, fresh => {
+          // Hold the same mutation lock as cleanup from the verified OS write through marker
+          // persistence. Re-run idempotent writes on rebase so a removed payload is restored.
+          stored.length = 0;
+          for (const part of parts) {
+            const credentialJson = (part as { credentialJson: string }).credentialJson;
+            const id = apiKeyPoolEntryId(credentialJson);
+            const account = gcpCredentialStoreAccount(name, id);
+            const existedBefore = providerKeychainEntry(account).getPassword() !== null;
+            if (!existedBefore) created.push(`${GCP_CREDENTIAL_MARKER_PREFIX}${account}`);
+            stored.push({ id, marker: storeGcpCredentialJson(config, name, credentialJson, existedBefore) });
+          }
           const pool = ensurePool(fresh);
           for (const { id, marker } of stored) {
             const existing = pool.find(e => e.id === id);
