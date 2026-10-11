@@ -1378,10 +1378,8 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
             });
           }
         }
-        // Include the durable row: a prior failed save can leave the live row ahead of disk.
         const durable = readConfigAdmissionSnapshot();
-        const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file"
-          && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
+        const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file" && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
         removedCredentials = [config.providers[name], durableProvider].flatMap(provider => provider ? providerGcpCredentialMarkers(provider) : []);
         config.providers[name] = candidate;
         if (body.setDefault === true) config.defaultProvider = name;
@@ -1859,8 +1857,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     const shadowDependency = shadowInterceptProviderDependency(config, name);
     if (fallbackDefault) config.defaultProvider = fallbackDefault;
     const durable = readConfigAdmissionSnapshot();
-    const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file"
-      && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
+    const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file" && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
     const removedCredentials = [config.providers[name], durableProvider].flatMap(provider => provider ? providerGcpCredentialMarkers(provider) : []);
     delete config.providers[name];
     const { dropProviderCustomModels } = await import("../../providers/provider-id-rewrite");
