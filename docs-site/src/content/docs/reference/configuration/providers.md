@@ -1425,6 +1425,9 @@ echoing credential material. Empty marker accounts are invalid and do not fall b
 Removing a key or provider deletes its unreferenced GCP credentials after the configuration is
 saved; a credential referenced by another provider is retained. If OS-store cleanup fails, a
 warning requests manual inspection without undoing the committed configuration removal.
+Ordinary keychain store/restore actions leave GCP markers and JSON in the OS store. Restoring
+credential JSON through a `keychain:` alias is refused, and cleanup preserves accounts still
+referenced through either marker spelling.
 
 By default a provider's `apiKey` and `apiKeyPool` sit in `config.json` (mode 0600, atomic writes).
 If you would rather keep the key material out of the file, move it into the OS credential store:

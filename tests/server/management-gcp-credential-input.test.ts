@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig, loadConfig } from "../../src/config";
-import { addProviderApiKey } from "../../src/providers/api-keys";
-import { setProviderKeychainEntryFactoryForTests } from "../../src/providers/key-store";
+import { addProviderApiKey, removeProviderApiKey } from "../../src/providers/api-keys";
+import { setProviderKeychainEntryFactoryForTests, storeProviderKeyInKeychain, restoreProviderKeyFromKeychain, providerKeyStoreKind } from "../../src/providers/key-store";
 import { handleProviderRoutes } from "../../src/server/management/provider-routes";
 import { handleProviderCommand } from "../../src/cli/provider";
 import * as destinationPolicy from "../../src/lib/destination-policy";
@@ -117,5 +117,45 @@ test("OS-store failures propagate without echoing credential material or committ
   expect(result).toMatchObject({ error: expect.stringContaining("credential storage failed") });
   expect(JSON.stringify(result)).not.toContain("fixture-secret");
   expect(config).toEqual(before);
+  assertNoPlaintext();
+});
+
+test("keychain store/restore leaves GCP markers and their stored JSON intact in mixed pools", () => {
+  expect(addProviderApiKey(config, "relay", credential)).toHaveProperty("id");
+  const marker = config.providers.relay!.apiKey!;
+  const account = marker.slice("gcp-sa:".length);
+  expect(providerKeyStoreKind(config.providers.relay)).toBe("keychain");
+  expect(storeProviderKeyInKeychain(config, "relay")).toEqual({ ok: true, moved: 1 });
+  expect(config.providers.relay!.apiKey).toBe(marker);
+  expect(secrets.get(`opencodex.provider-api-key.v1:${account}`)).toBe(credential);
+  expect(restoreProviderKeyFromKeychain(config, "relay")).toEqual({ ok: true, restored: 1 });
+  expect(config.providers.relay!.apiKey).toBe(marker);
+  expect(config.providers.relay!.apiKeyPool!.some(row => row.key === marker)).toBe(true);
+  expect(secrets.get(`opencodex.provider-api-key.v1:${account}`)).toBe(credential);
+  assertNoPlaintext();
+});
+
+test("cleanup retains the same OS account referenced by another provider through keychain syntax", () => {
+  const result = addProviderApiKey(config, "relay", credential);
+  if ("error" in result) throw new Error(result.error);
+  const account = config.providers.relay!.apiKey!.slice("gcp-sa:".length);
+  config.providers.shared = { adapter: "openai-chat", baseUrl: "https://shared.example/v1", apiKey: `keychain:${account}` };
+  saveConfig(config);
+  expect(removeProviderApiKey(config, "relay", result.id)).toBe(true);
+  expect(secrets.get(`opencodex.provider-api-key.v1:${account}`)).toBe(credential);
+  expect(loadConfig().providers.shared!.apiKey).toBe(`keychain:${account}`);
+  assertNoPlaintext();
+});
+
+test("restore never publishes stored credential JSON through a keychain alias", () => {
+  expect(addProviderApiKey(config, "relay", credential)).toHaveProperty("id");
+  const marker = config.providers.relay!.apiKey!;
+  const account = marker.slice("gcp-sa:".length);
+  config.providers.relay!.apiKey = `keychain:${account}`;
+  saveConfig(config);
+  const before = structuredClone(config);
+  expect(restoreProviderKeyFromKeychain(config, "relay")).toMatchObject({ ok: false, status: 400 });
+  expect(config).toEqual(before);
+  expect(secrets.get(`opencodex.provider-api-key.v1:${account}`)).toBe(credential);
   assertNoPlaintext();
 });

@@ -1,7 +1,7 @@
 import { mutatePersistedConfig } from "../config";
 import { GCP_CREDENTIAL_MARKER_PREFIX, gcpCredentialMarkerAccount } from "../lib/gcp-adc";
 import type { OcxProviderConfig } from "../types";
-import { providerKeychainEntry } from "./api-key-resolve";
+import { isKeychainReference, keychainAccount, providerKeychainEntry } from "./api-key-resolve";
 
 /** Snapshot credential references before removing a key or provider. */
 export function providerGcpCredentialMarkers(provider: OcxProviderConfig): string[] {
@@ -16,11 +16,15 @@ export function cleanupRemovedGcpCredentials(markers: readonly string[]): void {
     // Re-read under the config mutation lock: another provider may share a marker, or a newer
     // commit may have reintroduced it. Never decide deletion from the caller's stale snapshot.
     const outcome = mutatePersistedConfig(fresh => {
-      const retained = new Set(Object.values(fresh.providers).flatMap(providerGcpCredentialMarkers));
+      const retained = new Set(Object.values(fresh.providers).flatMap(provider =>
+        [provider.apiKey, ...(provider.apiKeyPool ?? []).map(entry => entry.key)]
+          .flatMap(key => {
+            const account = isKeychainReference(key) ? keychainAccount(key) : gcpCredentialMarkerAccount(key);
+            return account === undefined ? [] : [account];
+          })));
       for (const marker of new Set(markers)) {
-        if (retained.has(marker)) continue;
         const account = gcpCredentialMarkerAccount(marker);
-        if (account) providerKeychainEntry(account).deletePassword();
+        if (account && !retained.has(account)) providerKeychainEntry(account).deletePassword();
       }
       return { changed: false, value: true };
     });

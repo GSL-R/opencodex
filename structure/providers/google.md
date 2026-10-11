@@ -13,6 +13,10 @@ credential material. `src/server/management/provider-routes.ts` and `src/cli/pro
 this admission through `providerCredentialInputError` in `src/providers/api-keys.ts`.
 `src/providers/gcp-credential-cleanup.ts` cleans removed markers after config persistence, under the
 config mutation lock, retaining credentials still referenced by any persisted provider.
+Reference retention compares OS account identities across both `gcp-sa:` and `keychain:`
+spellings. `src/providers/key-store.ts` leaves GCP markers stored during ordinary keychain
+store/restore and refuses to restore GCP JSON through a keychain alias; the shared classification
+in `src/providers/api-key-resolve.ts` reports those markers as OS-stored credentials.
 
 ## Google thought-text visibility boundary
 

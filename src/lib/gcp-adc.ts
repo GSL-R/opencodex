@@ -22,7 +22,7 @@ import { Buffer } from "node:buffer";
 import * as os from "node:os";
 import * as path from "node:path";
 import { readFileSync, existsSync, statSync } from "node:fs";
-import { providerKeychainEntry } from "../providers/api-key-resolve";
+import { GCP_CREDENTIAL_MARKER_PREFIX, providerKeychainEntry } from "../providers/api-key-resolve";
 import {
   captureConfigGeneration,
   sweepExpiredOnWrite,
@@ -45,10 +45,9 @@ const TOKEN_RETRY_BASE_MS = 300;
  * Reference prefix stored in `provider.apiKey` (and `apiKeyPool` entries) when the user pastes a
  * GCP credential JSON directly into an API-key slot. The secret JSON lives in the OS credential
  * store under the same service the `keychain:` references use; only the marker is persisted to
- * `config.json`. Lives here — not in api-key-resolve — because it is meaningful only to this
- * module's ADC resolution (the API-key twins, `keychain:` and `${ENV}`, stay there).
+ * `config.json`. The leaf reference prefix also identifies already-stored material for migration.
  */
-export const GCP_CREDENTIAL_MARKER_PREFIX = "gcp-sa:";
+export { GCP_CREDENTIAL_MARKER_PREFIX } from "../providers/api-key-resolve";
 
 /** Extract a marker account; malformed explicit markers never opt into host ADC. */
 export function gcpCredentialMarkerAccount(value: string | undefined): string | undefined {
