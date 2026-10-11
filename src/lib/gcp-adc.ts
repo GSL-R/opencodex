@@ -68,9 +68,17 @@ export function parseGcpCredentialJson(value: string): AdcFileCredentials | unde
   const trimmed = (value ?? "").trim();
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return undefined;
   try {
-    const parsed = JSON.parse(trimmed) as { type?: unknown };
-    if (parsed?.type === "service_account" || parsed?.type === "authorized_user") {
-      return parsed as AdcFileCredentials;
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (parsed?.type === "service_account") {
+      if (typeof parsed.client_email !== "string" || !parsed.client_email.trim()) return undefined;
+      if (typeof parsed.private_key !== "string" || !parsed.private_key.trim()) return undefined;
+      return parsed as unknown as AdcFileCredentials;
+    }
+    if (parsed?.type === "authorized_user") {
+      if (typeof parsed.client_id !== "string" || !parsed.client_id.trim()) return undefined;
+      if (typeof parsed.client_secret !== "string" || !parsed.client_secret.trim()) return undefined;
+      if (typeof parsed.refresh_token !== "string" || !parsed.refresh_token.trim()) return undefined;
+      return parsed as unknown as AdcFileCredentials;
     }
     return undefined;
   } catch {

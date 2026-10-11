@@ -54,6 +54,20 @@ describe("parseGcpCredentialJson", () => {
     expect(parseGcpCredentialJson("AIza-real-key-123456")).toBeUndefined();
     expect(parseGcpCredentialJson("{}")).toBeUndefined();
   });
+
+  test("rejects incomplete service_account missing required fields", () => {
+    expect(parseGcpCredentialJson(JSON.stringify({ type: "service_account" }))).toBeUndefined();
+    expect(parseGcpCredentialJson(JSON.stringify({ type: "service_account", client_email: "svc@test" }))).toBeUndefined();
+    expect(parseGcpCredentialJson(JSON.stringify({ type: "service_account", private_key: "k" }))).toBeUndefined();
+    expect(parseGcpCredentialJson(JSON.stringify({ type: "service_account", client_email: "  ", private_key: "k" }))).toBeUndefined();
+  });
+
+  test("rejects incomplete authorized_user missing required fields", () => {
+    expect(parseGcpCredentialJson(JSON.stringify({ type: "authorized_user" }))).toBeUndefined();
+    expect(parseGcpCredentialJson(JSON.stringify({ type: "authorized_user", client_id: "c", client_secret: "s" }))).toBeUndefined();
+    expect(parseGcpCredentialJson(JSON.stringify({ type: "authorized_user", client_id: "c", refresh_token: "r" }))).toBeUndefined();
+    expect(parseGcpCredentialJson(JSON.stringify({ type: "authorized_user", client_id: "c", client_secret: "s", refresh_token: "  " }))).toBeUndefined();
+  });
 });
 
 describe("gcpCredentialMarkerAccount", () => {
