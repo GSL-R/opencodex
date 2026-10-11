@@ -19,6 +19,7 @@ import { ConfigWritePublishedError, persistConfigUnlocked, readRawConfigJson } f
 import { configDiagnosticsFromRaw, readConfigDiagnostics } from "./diagnostics";
 import { normalizePersistedClaudeCode } from "./load-degrade";
 import { reconcileApiKeys } from "./api-key-reconcile";
+import { captureLiveTopologyBaseline, LIVE_TOPOLOGY_KEYS, projectLiveTopology } from "./live-topology";
 
 // ---------------------------------------------------------------------------
 // Hand-edit protection for the `claudeCode` subtree (devlog 260726_claude_auth_auto/040 H1).
@@ -105,6 +106,7 @@ const detachedConfigSnapshots = new WeakSet<OcxConfig>();
 export function armClaudeCodeBaseline(config: OcxConfig): void {
   liveConfigBaseline.set(config, structuredClone(config));
   claudeCodeBaseline.set(config, structuredClone(config.claudeCode));
+  captureLiveTopologyBaseline(config);
 }
 
 /**
@@ -407,7 +409,7 @@ export function reconcileLiveConfigFromDisk(config: OcxConfig, persistedBaseline
     config as unknown as Record<string, unknown>,
     persistedBaseline as unknown as Record<string, unknown>,
     persisted as unknown as Record<string, unknown>,
-    new Set(["hostname", "port", ...(claudeGuardArmed ? ["claudeCode"] : [])]),
+    new Set([...LIVE_TOPOLOGY_KEYS, ...(claudeGuardArmed ? ["claudeCode"] : [])]),
   );
   applyConfigObjectChildDeletions(config, childDeletions);
 
@@ -480,9 +482,11 @@ export function saveConfigPreservingClaudeCode(config: OcxConfig): void {
     const onDisk = readRawConfigJson();
     const baseline = liveConfigBaseline.get(config);
     let diskDeletedKeys = new Set<string>();
+    let persistedSnapshot: OcxConfig | undefined;
     if (baseline && onDisk !== undefined) {
       const persistedDiagnostics = configDiagnosticsFromRaw(JSON.stringify(onDisk));
       if (persistedDiagnostics.source === "file") {
+        persistedSnapshot = persistedDiagnostics.config;
         // Capture authoritative disk deletions before reconciliation can restore a key.
         // Live instances retain actual socket identity; detached discovery snapshots
         // own no socket and also merge listener fields and disk-only sections.
@@ -490,26 +494,19 @@ export function saveConfigPreservingClaudeCode(config: OcxConfig): void {
         diskDeletedKeys = configRebaseDeletionKeys(persistedDiagnostics.config);
         // Preserve explicit pending live edits; stale retention is not an edit.
         if (!detached) for (const key of diskDeletedKeys) {
-          if (key !== "hostname" && key !== "port" && !deepEqual(
+          if (!LIVE_TOPOLOGY_KEYS.has(key) && !deepEqual(
             ownConfigValue(config as unknown as Record<string, unknown>, key),
             ownConfigValue(baseline as unknown as Record<string, unknown>, key))) diskDeletedKeys.delete(key);
         }
         const deletedKeys = new Set([...diskDeletedKeys, ...configRebaseDeletionKeys(config)]);
         const skipped = detached
           ? new Set(["claudeCode"])
-          : new Set(["hostname", "port", "claudeCode", CONFIG_REBASE_PROVENANCE_KEY]);
+          : new Set([...LIVE_TOPOLOGY_KEYS, "claudeCode", CONFIG_REBASE_PROVENANCE_KEY]);
         if (!detached) {
           const provenanceExists = configHasRebaseProvenance(config) || configHasRebaseProvenance(persistedDiagnostics.config);
-          // Only keys this live config is actually known to have diverged on may be
-          // rebased. The baseline is captured once when the server arms it, so any key
-          // that appeared on disk afterwards — through saveConfig(), a hand edit, or
-          // another process — is absent from the baseline as well as from the live
-          // config. Reconciling those keys reads "live never changed this" and adopts
-          // the disk value, which resurrects a field the live writer had deliberately
-          // deleted (#1462 regression: PUT /api/grok/selection with an empty list).
-          // Restrict the merge to keys the baseline knew about, plus keys the live
-          // config still carries; a key that exists only on disk is left to the
-          // ordinary whole-config write below.
+          // Without provenance, disk-only keys remain subject to the legacy whole-
+          // config write: adopting them could resurrect a deliberate live deletion
+          // absent from its baseline (#1462). Provenance makes that intent explicit.
           const rebaseableKeys = new Set([
             ...Object.keys(baseline as unknown as Record<string, unknown>),
             ...Object.keys(config as unknown as Record<string, unknown>),
@@ -528,7 +525,7 @@ export function saveConfigPreservingClaudeCode(config: OcxConfig): void {
           skipped,
         );
         for (const key of deletedKeys) {
-          if (!detached && (key === "hostname" || key === "port")) continue;
+          if (!detached && LIVE_TOPOLOGY_KEYS.has(key)) continue;
           delete (config as unknown as Record<string, unknown>)[key];
         }
       }
@@ -545,7 +542,9 @@ export function saveConfigPreservingClaudeCode(config: OcxConfig): void {
         }
       }
     }
-    const durableProjection = { ...projectConfigRebaseProvenance(config) };
+    const desired = persistedSnapshot && !detachedConfigSnapshots.has(config)
+      ? projectLiveTopology(config, persistedSnapshot, reconcileConfigRecord) : config;
+    const durableProjection = { ...desired, configRebaseProvenance: projectConfigRebaseProvenance(config).configRebaseProvenance };
     for (const key of diskDeletedKeys) {
       delete (durableProjection as unknown as Record<string, unknown>)[key];
     }
@@ -554,7 +553,7 @@ export function saveConfigPreservingClaudeCode(config: OcxConfig): void {
     const provenanceProjection = projectConfigRebaseProvenance(durableProjection);
     const projectedConfig = projectCustomModelCatalogMigration(
       onDisk,
-      config,
+      durableProjection,
     );
     if (provenanceProjection.configRebaseProvenance === undefined) delete projectedConfig.configRebaseProvenance;
     else projectedConfig.configRebaseProvenance = provenanceProjection.configRebaseProvenance;
@@ -571,6 +570,7 @@ export function saveConfigPreservingClaudeCode(config: OcxConfig): void {
       persist(projectedConfig);
     }
     adoptCustomModelCatalogMigration(config, projectedConfig);
+    captureLiveTopologyBaseline(config);
     if (claudeCodeBaseline.has(config)) {
       claudeCodeBaseline.set(config, structuredClone(config.claudeCode));
     }

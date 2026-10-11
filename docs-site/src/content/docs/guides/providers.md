@@ -1252,13 +1252,13 @@ The field is always present. It is `null` when the tier is unknown, which is del
 **absent** key means the proxy predates this field, while `null` means this version looked and the
 provider did not report a tier. Collapsing the two would let a consumer quietly assume a tier.
 
-For Anthropic the value is `null` today. Its usage endpoint returns quota buckets only — the
-five-hour and seven-day windows, the model-scoped weekly windows, and a `limits` array — and no
-subscription or tier field; the OAuth token response carries only the account id and email. There
-is nothing to map, so nothing is mapped. The tier is also not derivable from the quota it does
-return, because percentages are normalized per account: a Max ×5 seat at 50% is indistinguishable
-from a Max ×20 seat at 50%. If you need weighted pool capacity across mixed Anthropic tiers, keep
-that mapping outside OpenCodex until upstream reports the tier itself.
+For Anthropic accounts (both pools) the value comes from the authenticated account profile that
+OpenCodex already reads: the organization's rate-limit tier, reported as labels such as `max_20x`,
+`max_5x` or `pro`. It is recorded at sign-in, local Claude Code import and token refresh. For
+Google Antigravity the value is the paid tier from `loadCodeAssist` (for example `g1-pro-tier`),
+falling back to the current tier. A failed read keeps the last recorded label; a read that answers
+without a tier reports `null`. The tier is never derived from quota percentages, because those are
+normalized per account: a Max ×5 seat at 50% is indistinguishable from a Max ×20 seat at 50%.
 
 ### GPT-5.6 preview paths
 

@@ -19,6 +19,7 @@
  *   distinct one. Kimi extracts JWT `user_id`/`sub` as accountId; Cursor extracts JWT `sub` —
  *   both append distinct identified accounts under multiauth.
  */
+import { normalizeOAuthPlan, mergeOAuthPlan } from "./plan";
 import { normalizeAnthropicIdentity, matchesAnthropicImport, mergeAnthropicIdentity } from "./anthropic-identity";
 import { isAnthropicInstanceId, type AnthropicInstanceId } from "../providers/anthropic-instance-id";
 import { assertNoCrossAnthropicRegistration, assertAnthropicCredentialSource, assertAnthropicInstanceLoginConfig } from "./store-anthropic-instance";
@@ -537,6 +538,7 @@ function normalizeCredential(cred: unknown): OAuthCredentials | null {
   if (typeof candidate.accountId === "string" && candidate.accountId.length > 0) normalized.accountId = candidate.accountId;
   const identity = normalizeAnthropicIdentity(candidate.anthropicIdentity, candidate.access);
   if (identity) normalized.anthropicIdentity = identity;
+  if (candidate.plan !== undefined) normalized.plan = normalizeOAuthPlan(candidate.plan) ?? null;
   if (isCredentialSource(candidate.source)) normalized.source = candidate.source;
   if (typeof candidate.projectId === "string" && candidate.projectId.length > 0) normalized.projectId = candidate.projectId;
   if (typeof candidate.apiBaseUrl === "string" && candidate.apiBaseUrl.length > 0) {
@@ -905,6 +907,7 @@ export async function saveCredentialWithReceipt(
       const existing = set.accounts.find(a => matchesAnthropicImport(a.credential, safe));
       if (existing) {
         existing.credential = { ...safe, ...mergeAnthropicIdentity(safe, existing.credential),
+          plan: mergeOAuthPlan(safe, existing.credential),
           accountId: safe.accountId ?? existing.credential.accountId, email: safe.email ?? existing.credential.email };
         set.selectionRevision = previousSelectionRevision;
         delete existing.needsReauth;
@@ -920,7 +923,10 @@ export async function saveCredentialWithReceipt(
     } else if (identity) {
       const existing = set.accounts.find(a => (a.credential.accountId ?? a.credential.email) === identity);
       if (existing) {
-        existing.credential = safe;
+        // Same identity: a login whose tier read failed keeps the stored label (plan absent),
+        // while an observed unknown (plan null) still clears it.
+        const plan = mergeOAuthPlan(safe, existing.credential);
+        existing.credential = plan === undefined ? safe : { ...safe, plan };
         delete existing.needsReauth;
         delete existing.needsReauthReason;
         delete existing.refreshAttentionGeneration;

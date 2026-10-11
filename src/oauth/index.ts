@@ -86,6 +86,7 @@ import { codexAccountNamespaceProviderCollisionError } from "../codex/account-na
 
 import { REFRESH_SKEW_MS } from "./refresh-policy";
 import { newerClaudeCredentialForInstance, captureAnthropicCredentialOwnerForInstance } from "./anthropic-continuity";
+import { normalizeOAuthPlan, mergeOAuthPlan } from "./plan";
 import { mergeAnthropicIdentity, type AnthropicIdentityResolver } from "./anthropic-identity";
 import { AnthropicCrossInstanceDuplicateError, AnthropicLocalCliImportError, assertAnthropicCredentialSource } from "./store-anthropic-instance";
 export interface OAuthAccessSnapshot {
@@ -749,6 +750,7 @@ function merged(fresh: OAuthCredentials, previous: OAuthCredentials): OAuthCrede
   return {
     ...fresh,
     ...mergeAnthropicIdentity(fresh, previous),
+    plan: mergeOAuthPlan(fresh, previous),
     // Shared: a refresh function returns "local-cli" only when the credential it hands back
     // still is the local CLI's (Devin re-reading the CLI file, Meta Muse echoing its durable
     // CLI key). Relabelling that "oauth" would stop the next forced refresh from re-reading it.
@@ -1625,7 +1627,10 @@ export async function runLogin(
       if (!identityMatches) {
         throw new OAuthReauthIdentityMismatchError();
       }
-      await (deps.saveAccountCredential ?? saveAccountCredential)(provider, opts.reauthAccountId, cred, {
+      // Proven same account: a reauth whose tier read failed keeps the stored label.
+      const reauthPlan = mergeOAuthPlan(cred, existing);
+      const reauthCred = reauthPlan === undefined ? cred : { ...cred, plan: reauthPlan };
+      await (deps.saveAccountCredential ?? saveAccountCredential)(provider, opts.reauthAccountId, reauthCred, {
         assertBeforePersist: deps.assertCurrentOwner,
         rotateLoginId: true,
       });
@@ -1736,10 +1741,9 @@ export interface OAuthAccountSummary {
    * version looked and upstream did not say. Omitting it would make those indistinguishable and
    * invite a consumer to assume a tier.
    *
-   * Every OAuth provider reports `null` today. Anthropic's `/api/oauth/usage` returns quota
-   * buckets only — `five_hour`, `seven_day`, the model-scoped weekly windows and `limits[]` —
-   * and carries no subscription/tier field, and its token response carries none either. See
-   * `fetchAnthropicUsageQuota` in `src/providers/quota.ts`.
+   * Reports the validated upstream tier stored with the credential. Anthropic profile reads
+   * supply the organization tier; Antigravity loadCodeAssist reads prefer paidTier to currentTier.
+   * Missing or invalid labels remain null; quota percentages never establish a subscription.
    */
   plan: string | null;
 }
@@ -1764,11 +1768,8 @@ export function getLoginStatus(provider: string, maskEmails = true): { loggedIn:
     ...(accountNeedsReauthForStatus(provider, a) ? { needsReauth: true } : {}),
     ...(a.needsReauth && a.needsReauthReason === "verify_account" ? { needsReauthReason: a.needsReauthReason } : {}),
     expiresAt: a.credential.expires,
-    // Explicitly null rather than omitted — see OAuthAccountSummary.plan. No OAuth provider
-    // exposes a subscription tier today, so there is nothing truthful to put here; deriving one
-    // from quota percentages is not possible, because they are normalized per account and a
-    // half-consumed small seat is indistinguishable from a half-consumed large one.
-    plan: null,
+    // Explicitly null rather than omitted when upstream tier metadata is unknown.
+    plan: normalizeOAuthPlan(a.credential.plan) ?? null,
   }));
 
   // A stored credential counts as "logged in" when it exists and is not marked for
