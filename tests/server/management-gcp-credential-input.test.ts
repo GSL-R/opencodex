@@ -123,6 +123,44 @@ test("OS-store failures propagate without echoing credential material or committ
 
 const overwriteArgs = ["add", "relay", "--force", "--adapter", "openai-chat", "--base-url", "https://relay.example/v1", "--api-key", "replacement-key"];
 
+test.each(["none", "gcp-sa", "keychain"])("CLI overwrite includes a newer durable row, retaining %s shared references", async shared => {
+  expect(addProviderApiKey(config, "relay", credential)).toHaveProperty("id");
+  const lateCredential = JSON.stringify({ ...JSON.parse(credential), client_id: "late-client" });
+  const lock = configModule.withConfigMutationLockSync;
+  let wrote = false, lateAccount = "";
+  if (shared !== "none") {
+    const originalRow = structuredClone(config.providers.relay!);
+    const added = addProviderApiKey(config, "relay", lateCredential);
+    if ("error" in added) throw new Error(added.error);
+    lateAccount = config.providers.relay!.apiKeyPool!.find(entry => entry.id === added.id)!.key.slice("gcp-sa:".length);
+    config.providers.relay = originalRow;
+    config.providers.shared = { adapter: "openai-chat", baseUrl: "https://shared.example/v1", apiKey: `${shared}:${lateAccount}` };
+    saveConfig(config);
+  }
+  spyOn(configModule, "withConfigMutationLockSync").mockImplementation(<T>(fn: () => T, dir?: string): T => {
+    if (!wrote) {
+      wrote = true;
+      const fresh = loadConfig();
+      fresh.providers.relay!.apiKey = undefined;
+      fresh.providers.relay!.apiKeyPool = undefined;
+      expect(addProviderApiKey(fresh, "relay", lateCredential)).toHaveProperty("id");
+      lateAccount = fresh.providers.relay!.apiKey!.slice("gcp-sa:".length);
+      saveConfig(fresh);
+    }
+    return lock(fn, dir);
+  });
+  spyOn(console, "log").mockImplementation(() => {});
+  await handleProviderCommand(overwriteArgs);
+  expect(wrote).toBe(true);
+  const saved = loadConfig();
+  expect(saved.providers.relay!.apiKey).toBe("replacement-key");
+  expect(saved.providers.relay!.apiKeyPool).toBeUndefined();
+  if (shared !== "none") expect(saved.providers.shared!.apiKey).toBe(`${shared}:${lateAccount}`);
+  expect(secrets.size).toBe(shared === "none" ? 0 : 1);
+  if (shared !== "none") expect(secrets.get(`opencodex.provider-api-key.v1:${lateAccount}`)).toBe(lateCredential);
+  assertNoPlaintext();
+});
+
 test.each(["none", "gcp-sa", "keychain"])("CLI overwrite cleans old pool credentials after commit, preserving %s shared references", async shared => {
   expect(addProviderApiKey(config, "relay", credential)).toHaveProperty("id");
   const retainedMarker = config.providers.relay!.apiKey!;

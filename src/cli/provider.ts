@@ -8,7 +8,7 @@
  *   show <name>   Show provider config details (secrets masked)
  *   set-default <name>  Change the default provider
  */
-import { hasOwnProvider, isValidProviderName, loadConfig, sanitizeModelCostsForDisplay, saveConfig, validateConfigCandidate, withConfigMutationLockSync } from "../config";
+import { hasOwnProvider, isValidProviderName, loadConfig, readConfigAdmissionSnapshot, sanitizeModelCostsForDisplay, saveConfig, validateConfigCandidate, withConfigMutationLockSync } from "../config";
 import { apiKeyTransportConfigError, modelCapabilitiesConfigError, mergeModelCapabilities } from "../config/provider-validation";
 import { hasHelpFlag, printSubcommandUsage } from "./help";
 import { getProviderRegistryEntry, PROVIDER_REGISTRY } from "../providers/registry";
@@ -343,8 +343,10 @@ async function handleAdd(args: string[], deps: ProviderCommandDeps): Promise<voi
       catch { markerCollision = true; return; }
     }
     initializeProviderModelSelection(name, provConfig, existingProvider, config);
-    const replaced = config.providers[name];
-    removedCredentials = replaced ? providerGcpCredentialMarkers(replaced) : [];
+    const durable = readConfigAdmissionSnapshot();
+    const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file"
+      && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
+    removedCredentials = [config.providers[name], durableProvider].flatMap(provider => provider ? providerGcpCredentialMarkers(provider) : []);
     config.providers[name] = provConfig;
     if (setDefault) config.defaultProvider = name;
     validateAndSave(config);
