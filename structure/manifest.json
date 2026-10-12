@@ -333,6 +333,18 @@
       ]
     },
     {
+      "path": "providers/anthropic-key-billing.md",
+      "tier": 4,
+      "title": "Anthropic API-key Billing Recovery",
+      "scope": "Exact billing refusal evidence, immutable physical credential ownership, pacing provenance and bounded pre-output key recovery.",
+      "documents": [
+        "src/providers/anthropic-billing-refusal.ts",
+        "src/providers/anthropic-billing-ownership.ts",
+        "src/providers/anthropic-billing-recovery.ts",
+        "src/providers/request-pacing.ts"
+      ]
+    },
+    {
       "path": "providers/anthropic-account-pool.md",
       "tier": 4,
       "title": "Anthropic Account Pool",
@@ -552,6 +564,19 @@
         "src/service-manager-probe.ts",
         "src/sidecar/",
         "src/update/"
+      ]
+    },
+    {
+      "path": "ops/service-health-recovery.md",
+      "tier": 6,
+      "title": "Service Health Recovery",
+      "scope": "Opt-in sentinel that turns a hung but listening managed service proxy into an exit its manager restarts.",
+      "documents": [
+        "src/service/health-sentinel-launch.ts",
+        "src/service/health-sentinel-main.ts",
+        "src/service/health-sentinel-policy.ts",
+        "src/service/health-sentinel-probe.ts",
+        "src/service/health-sentinel-windows.ts"
       ]
     },
     {
