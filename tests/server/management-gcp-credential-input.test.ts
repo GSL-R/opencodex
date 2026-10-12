@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig, loadConfig } from "../../src/config";
+import * as configModule from "../../src/config";
 import { addProviderApiKey, removeProviderApiKey } from "../../src/providers/api-keys";
 import { setProviderKeychainEntryFactoryForTests, storeProviderKeyInKeychain, restoreProviderKeyFromKeychain, providerKeyStoreKind } from "../../src/providers/key-store";
 import { handleProviderRoutes } from "../../src/server/management/provider-routes";
@@ -118,6 +119,56 @@ test("OS-store failures propagate without echoing credential material or committ
   expect(JSON.stringify(result)).not.toContain("fixture-secret");
   expect(config).toEqual(before);
   assertNoPlaintext();
+});
+
+const overwriteArgs = ["add", "relay", "--force", "--adapter", "openai-chat", "--base-url", "https://relay.example/v1", "--api-key", "replacement-key"];
+
+test.each(["none", "gcp-sa", "keychain"])("CLI overwrite cleans old pool credentials after commit, preserving %s shared references", async shared => {
+  expect(addProviderApiKey(config, "relay", credential)).toHaveProperty("id");
+  const retainedMarker = config.providers.relay!.apiKey!;
+  const account = retainedMarker.slice("gcp-sa:".length);
+  expect(addProviderApiKey(config, "relay", JSON.stringify({ ...JSON.parse(credential), client_id: "second-client" }))).toHaveProperty("id");
+  if (shared !== "none") config.providers.shared = {
+    adapter: "openai-chat", baseUrl: "https://shared.example/v1", apiKey: `${shared}:${account}`,
+  };
+  saveConfig(config);
+  expect(secrets.size).toBe(2);
+  let deletions = 0;
+  setProviderKeychainEntryFactoryForTests((service, key) => ({
+    getPassword: () => secrets.get(`${service}:${key}`) ?? null,
+    setPassword: value => { secrets.set(`${service}:${key}`, value); },
+    deletePassword: () => {
+      expect(loadConfig().providers.relay!.apiKey).toBe("replacement-key");
+      deletions += 1;
+      return secrets.delete(`${service}:${key}`);
+    },
+  }));
+  spyOn(console, "log").mockImplementation(() => {});
+  await handleProviderCommand(overwriteArgs);
+  expect(loadConfig().providers.relay!.apiKey).toBe("replacement-key");
+  expect(deletions).toBe(shared === "none" ? 2 : 1);
+  expect(secrets.size).toBe(shared === "none" ? 0 : 1);
+  if (shared !== "none") expect(secrets.get(`opencodex.provider-api-key.v1:${account}`)).toBe(credential);
+  assertNoPlaintext();
+});
+
+test.each(["save failure", "refused paste"])("CLI overwrite preserves credentials on %s", async failure => {
+  expect(addProviderApiKey(config, "relay", credential)).toHaveProperty("id");
+  const before = readFileSync(join(home, "config.json"), "utf8");
+  const previousExitCode = process.exitCode;
+  try {
+    if (failure === "save failure") {
+      spyOn(configModule, "saveConfig").mockImplementation(() => { throw new Error("synthetic save failure"); });
+      await expect(handleProviderCommand(overwriteArgs)).rejects.toThrow("synthetic save failure");
+    } else {
+      spyOn(console, "error").mockImplementation(() => {});
+      await handleProviderCommand([...overwriteArgs.slice(0, -1), credential]);
+      expect(process.exitCode).toBe(2);
+    }
+    expect(readFileSync(join(home, "config.json"), "utf8")).toBe(before);
+    expect([...secrets.values()]).toEqual([credential]);
+    assertNoPlaintext();
+  } finally { process.exitCode = previousExitCode ?? 0; }
 });
 
 test("keychain store/restore leaves GCP markers and their stored JSON intact in mixed pools", () => {

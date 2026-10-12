@@ -336,12 +336,15 @@ async function handleAdd(args: string[], deps: ProviderCommandDeps): Promise<voi
   }
   const { initializeProviderModelSelection } = await import("../providers/initial-model-selection");
   let markerCollision = false;
+  let removedCredentials: string[] = [];
   withConfigMutationLockSync(() => {
     if (provConfig.anthropicOAuthInstance) {
       try { assertAnthropicInstanceLoginConfig(config, name); }
       catch { markerCollision = true; return; }
     }
     initializeProviderModelSelection(name, provConfig, existingProvider, config);
+    const replaced = config.providers[name];
+    removedCredentials = replaced ? providerGcpCredentialMarkers(replaced) : [];
     config.providers[name] = provConfig;
     if (setDefault) config.defaultProvider = name;
     validateAndSave(config);
@@ -352,6 +355,7 @@ async function handleAdd(args: string[], deps: ProviderCommandDeps): Promise<voi
     return;
   }
 
+  cleanupRemovedGcpCredentials(removedCredentials);
   let sync: LocalSyncResult | undefined;
   if (wantsSync) {
     try {

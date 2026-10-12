@@ -13,8 +13,8 @@ reject raw JSON in active keys or submitted pool entries before saving; mixed JS
 bulk pastes are rejected before any store writes. OS-store failures return a fixed error without
 credential material. `src/server/management/provider-routes.ts` and `src/cli/provider.ts` enforce
 this admission through `providerCredentialInputError` in `src/providers/api-keys.ts`.
-`src/providers/gcp-credential-cleanup.ts` cleans removed markers after config persistence, under the
-config mutation lock, retaining credentials still referenced by any persisted provider.
+`src/providers/gcp-credential-cleanup.ts` cleans removed markers after config persistence, including CLI `provider add --force` overwrites, under the
+config mutation lock, retaining credentials still referenced by any persisted provider. Failed saves and refused CLI additions do not clean credentials.
 Reference retention compares OS account identities across both `gcp-sa:` and `keychain:`
 spellings. `src/providers/key-store.ts` leaves GCP markers stored during ordinary keychain
 store/restore and refuses to restore GCP JSON through a keychain alias; the shared classification
