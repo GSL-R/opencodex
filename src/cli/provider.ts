@@ -225,6 +225,12 @@ async function handleAdd(args: string[], deps: ProviderCommandDeps): Promise<voi
   if (registryEntry) {
     provConfig = providerConfigSeed(registryEntry);
     if (apiKey) {
+      const candidateError = providerCredentialInputError({ apiKey });
+      if (candidateError) {
+        console.error(`Error: ${candidateError}`);
+        process.exitCode = 2;
+        return;
+      }
       if ((authMode ?? registryEntry.authKind) === "forward") {
         console.warn(`Warning: provider "${name}" uses ChatGPT login (forward auth); --api-key is ignored.`);
       } else if ((authMode ?? registryEntry.authKind) === "oauth") {

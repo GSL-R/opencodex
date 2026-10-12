@@ -121,6 +121,39 @@ test("OS-store failures propagate without echoing credential material or committ
   assertNoPlaintext();
 });
 
+test.each(["openai", "cursor"].flatMap(name => [credential,
+  JSON.stringify({ type: "service_account", client_email: "fixture@example.test", private_key: "synthetic-test-key" }),
+  JSON.stringify({ type: "external_account", client_secret: "fixture-secret" }),
+].map(input => ({ name, input }))))("CLI refuses credential JSON before ignoring registry key (%j)", async ({ name, input }) => {
+  const before = readFileSync(join(home, "config.json"), "utf8");
+  const files = readdirSync(home).filter(file => file.startsWith("config.json"));
+  const previousExitCode = process.exitCode;
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  const warning = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    process.exitCode = 0;
+    await handleProviderCommand(["add", name, "--api-key", input]);
+    expect(process.exitCode).toBe(2);
+    expect(error).toHaveBeenCalled();
+    expect(error.mock.calls.flat().join(" ")).not.toContain("fixture-secret");
+    expect(error.mock.calls.flat().join(" ")).not.toContain("synthetic-test-key");
+    expect(warning).not.toHaveBeenCalled();
+    expect(readFileSync(join(home, "config.json"), "utf8")).toBe(before);
+    expect(readdirSync(home).filter(file => file.startsWith("config.json"))).toEqual(files);
+    expect(secrets.size).toBe(0);
+  } finally { process.exitCode = previousExitCode ?? 0; }
+});
+
+test.each(["openai", "cursor"])("CLI still ignores ordinary keys for registry provider %s", async name => {
+  const warning = spyOn(console, "warn").mockImplementation(() => {});
+  spyOn(console, "log").mockImplementation(() => {});
+  await handleProviderCommand(["add", name, "--api-key", "synthetic-unused-key"]);
+  expect(warning.mock.calls.flat().join(" ")).toContain("--api-key is ignored");
+  expect(loadConfig().providers[name]).toBeDefined();
+  expect(loadConfig().providers[name]!.apiKey).not.toBe("synthetic-unused-key");
+  expect(secrets.size).toBe(0);
+});
+
 const overwriteArgs = ["add", "relay", "--force", "--adapter", "openai-chat", "--base-url", "https://relay.example/v1", "--api-key", "replacement-key"];
 
 test.each(["none", "gcp-sa", "keychain"])("CLI overwrite includes a newer durable row, retaining %s shared references", async shared => {

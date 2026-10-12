@@ -12,7 +12,7 @@ The dedicated key-pool endpoint owns JSON ingestion. Provider POST/create/overwr
 reject raw JSON in active keys or submitted pool entries before saving; mixed JSON/literal-key
 bulk pastes are rejected before any store writes. OS-store failures return a fixed error without
 credential material. `src/server/management/provider-routes.ts` and `src/cli/provider.ts` enforce
-this admission through `providerCredentialInputError` in `src/providers/api-keys.ts`.
+this admission through `providerCredentialInputError` in `src/providers/api-keys.ts`; CLI registry input is checked before forward/OAuth branches can discard `--api-key`.
 `src/providers/gcp-credential-cleanup.ts` cleans removed markers after config persistence, including CLI `provider add --force` overwrites, under the
 config mutation lock, retaining credentials still referenced by any persisted provider. CLI overwrite captures both live and latest durable rows under that lock. Failed saves and refused CLI additions do not clean credentials.
 Reference retention compares OS account identities across both `gcp-sa:` and `keychain:`
