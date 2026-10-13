@@ -1,7 +1,7 @@
 import { contextTierRecordConfigError, modelCapabilitiesConfigError, mergeModelCapabilities } from "../../config/provider-validation";
 import { DECLARABLE_HOSTED_TOOL_TYPES } from "../../responses/hosted-tool-policy";
 import { randomUUID } from "node:crypto";
-import { cleanupRemovedGcpCredentials, providerGcpCredentialMarkers } from "../../providers/gcp-credential-cleanup";
+import { cleanupRemovedGcpCredentials, providerGcpCredentialMarkers, snapshotProviderGcpCredentialMarkers } from "../../providers/gcp-credential-cleanup";
 import { providerCredentialInputError } from "../../providers/api-keys";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -919,6 +919,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       // Presence only (#959 review): header names and values never leave the process.
       hasHeaders: !!p.headers && Object.keys(p.headers).length > 0,
       allowPrivateNetwork: p.allowPrivateNetwork === true,
+      preserveResponsesReasoningContent: p.preserveResponsesReasoningContent,
       liveModels: p.liveModels !== false,
       requestPacing: p.requestPacing,
       models: p.models ?? [],
@@ -1378,9 +1379,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
             });
           }
         }
-        const durable = readConfigAdmissionSnapshot();
-        const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file" && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
-        removedCredentials = [config.providers[name], durableProvider].flatMap(provider => provider ? providerGcpCredentialMarkers(provider) : []);
+        removedCredentials = snapshotProviderGcpCredentialMarkers(name, config.providers[name]);
         config.providers[name] = candidate;
         if (body.setDefault === true) config.defaultProvider = name;
         (deps.saveConfigPreservingClaudeCode ?? save)(config);
@@ -1856,9 +1855,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // Deleting still succeeds; the response names the shadow-call target left without a provider.
     const shadowDependency = shadowInterceptProviderDependency(config, name);
     if (fallbackDefault) config.defaultProvider = fallbackDefault;
-    const durable = readConfigAdmissionSnapshot();
-    const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file" && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
-    const removedCredentials = [config.providers[name], durableProvider].flatMap(provider => provider ? providerGcpCredentialMarkers(provider) : []);
+    const removedCredentials = snapshotProviderGcpCredentialMarkers(name, config.providers[name]);
     delete config.providers[name];
     const { dropProviderCustomModels } = await import("../../providers/provider-id-rewrite");
     const droppedCustomModels = dropProviderCustomModels(config, name);

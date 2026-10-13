@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig, loadConfig } from "../../src/config";
 import * as configModule from "../../src/config";
 import { addProviderApiKey, removeProviderApiKey } from "../../src/providers/api-keys";
+import { snapshotProviderGcpCredentialMarkers } from "../../src/providers/gcp-credential-cleanup";
 import { setProviderKeychainEntryFactoryForTests, storeProviderKeyInKeychain, restoreProviderKeyFromKeychain, providerKeyStoreKind } from "../../src/providers/key-store";
 import { handleProviderRoutes } from "../../src/server/management/provider-routes";
 import { handleProviderCommand } from "../../src/cli/provider";
@@ -50,6 +51,23 @@ function assertNoPlaintext() {
     expect(content).not.toContain("fixture-refresh");
   }
 }
+
+test("management credential snapshot captures both live and valid durable provider rows", () => {
+  const live = { ...config.providers.relay!, apiKey: "gcp-sa:live" };
+  config.providers.relay!.apiKey = "gcp-sa:durable";
+  saveConfig(config);
+  expect(snapshotProviderGcpCredentialMarkers("relay", live)).toEqual(["gcp-sa:live", "gcp-sa:durable"]);
+  expect(snapshotProviderGcpCredentialMarkers("relay", undefined)).toEqual(["gcp-sa:durable"]);
+  expect(secrets.size).toBe(0);
+});
+
+test.each(["", "{not-json"])("management credential snapshot ignores an invalid durable config: %j", raw => {
+  const live = { ...config.providers.relay!, apiKey: "gcp-sa:live" };
+  writeFileSync(join(home, "config.json"), raw);
+  expect(snapshotProviderGcpCredentialMarkers("relay", live)).toEqual(["gcp-sa:live"]);
+  expect(readFileSync(join(home, "config.json"), "utf8")).toBe(raw);
+  expect(secrets.size).toBe(0);
+});
 
 test.each([
   { name: "new-provider", values: { apiKey: credential } },

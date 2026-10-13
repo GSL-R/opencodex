@@ -10,11 +10,12 @@
  * registers under the fixed namespace multi_agent_v1, so a rendered V1 surface reads
  * multi_agent_v1__spawn_agent.
  *
- * That rendering is the only request-visible proof of V1 behind exec. When the model supports
- * tool search, codex-rs registers V1 as DEFERRED and leaves it out of the description entirely,
- * and every OpenCodex catalog row advertises tool search. Such a turn carries no V1 evidence and
- * stays null here; a bare exec, the ALL_TOOLS mention, and the saved OpenCodex mode prove nothing
- * about the conversation (codex-rs pins the version per session).
+ * That rendering is the only proof of V1 inside exec itself. When the model supports tool search,
+ * codex-rs registers V1 as DEFERRED and leaves it out of the description entirely, and every
+ * OpenCodex catalog row advertises tool search. Such a turn carries no V1 evidence here; a bare
+ * exec, the ALL_TOOLS mention, and the saved OpenCodex mode prove nothing about the conversation
+ * (codex-rs pins the version per session). The deferred case has its own, separate evidence source
+ * in deferred-collab-surface.ts, which uses this file's genuine-exec check as a host guard.
  *
  * A tool description is copied into exec verbatim, so one that reproduces a complete top-level V1
  * section is indistinguishable from the host's own rendering. This parser cannot authenticate the
@@ -23,6 +24,16 @@
 import { CODE_MODE_EXEC_TOOL_NAME, declaresCodeModeExec, type OcxTool } from "../../types";
 
 export type CodeModeV1Evidence = "v1" | "ambiguous" | null;
+
+/** What a request's code-mode exec proves about collaboration, before any combination policy. */
+export interface CodeModeExecAnalysis {
+  /** A codex-rs code-mode exec is declared: bare, freeform, template-led, no bare shell bridge. */
+  genuineExec: boolean;
+  /** That exec renders a complete multi_agent_v1__spawn_agent section. */
+  renderedV1: boolean;
+  /** That exec mentions a spawn_agent or V2 companion that is not V1's, quoted or not. */
+  foreignCollabClaim: boolean;
+}
 
 /** First line of codex-rs EXEC_DESCRIPTION_TEMPLATE; an overridden or foreign exec fails closed. */
 const CODE_MODE_EXEC_TEMPLATE_HEADER = "Run JavaScript code to orchestrate/compose tool calls";
@@ -162,25 +173,33 @@ function mentionedToolNames(description: string): string[] {
 }
 
 /**
- * "v1" when a genuine code-mode exec renders the V1 spawn tool and nothing that claims another
- * collaboration surface; "ambiguous" when it renders both; null when it proves nothing.
- *
- * The two halves are deliberately asymmetric. V1 evidence needs a rendered section (a heading
- * followed by its complete declaration). The contradiction check reads every heading and
- * declaration line, inside fences or not and whoever "owns" it, so text copied into the listing
- * can only push a turn toward null; it cannot hide another surface.
+ * Reads every genuine code-mode exec once. The two collaboration halves are deliberately
+ * asymmetric. V1 evidence needs a rendered section (a heading followed by its complete
+ * declaration). The contradiction check reads every heading and declaration line, inside fences or
+ * not and whoever "owns" it, so text copied into the listing can only push a turn toward null; it
+ * cannot hide another surface. The contradiction is reported even without rendered V1, because
+ * deferred V1 evidence must also yield to a rendered foreign surface.
  */
-export function codeModeV1Evidence(tools: readonly OcxTool[] | undefined): CodeModeV1Evidence {
-  if (!tools || tools.length === 0) return null;
-  if (!declaresCodeModeExec(new Set(tools.filter(tool => !tool.namespace).map(tool => tool.name)))) return null;
-  let v1Spawn = false;
-  let foreign = false;
+export function analyzeCodeModeExec(tools: readonly OcxTool[] | undefined): CodeModeExecAnalysis {
+  const analysis: CodeModeExecAnalysis = { genuineExec: false, renderedV1: false, foreignCollabClaim: false };
+  if (!tools || tools.length === 0) return analysis;
+  if (!declaresCodeModeExec(new Set(tools.filter(tool => !tool.namespace).map(tool => tool.name)))) return analysis;
   for (const tool of tools) {
     if (!isCodeModeExec(tool)) continue;
+    analysis.genuineExec = true;
     // A rendered V1 spawn heading carries no raw-name suffix: the identifier needs no normalization.
-    if (renderedNestedTools(tool.description).some(rendered => rendered.raw === MULTI_AGENT_V1_SPAWN)) v1Spawn = true;
-    if (mentionedToolNames(tool.description).some(isForeignCollabName)) foreign = true;
+    if (renderedNestedTools(tool.description).some(rendered => rendered.raw === MULTI_AGENT_V1_SPAWN)) analysis.renderedV1 = true;
+    if (mentionedToolNames(tool.description).some(isForeignCollabName)) analysis.foreignCollabClaim = true;
   }
-  if (!v1Spawn) return null;
-  return foreign ? "ambiguous" : "v1";
+  return analysis;
+}
+
+/**
+ * "v1" when a genuine code-mode exec renders the V1 spawn tool and nothing that claims another
+ * collaboration surface; "ambiguous" when it renders both; null when it proves nothing.
+ */
+export function codeModeV1Evidence(tools: readonly OcxTool[] | undefined): CodeModeV1Evidence {
+  const analysis = analyzeCodeModeExec(tools);
+  if (!analysis.renderedV1) return null;
+  return analysis.foreignCollabClaim ? "ambiguous" : "v1";
 }

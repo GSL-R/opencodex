@@ -18,8 +18,8 @@ remain, and the note asks the next model to reopen unresolved visual evidence. P
 commentary-only or unphased histories stay intact. Sidecar preparation projects parsed messages before
 vision planning. The projection does not rewrite `_rawBody` or stored history; later vision preprocessing
 may rewrite the request-local raw body for transport safety. Normal generation and native compaction
-stay unchanged. Both routed v1 and v2 pass through this boundary;
-raw Responses gateways retain their existing text-only compaction conversion.
+stay unchanged. Both routed v1 and v2 pass through this boundary; raw Responses gateways retain their existing text-only compaction conversion.
+The [decoded checkpoint continuation contract](responses.md#decoded-checkpoint-continuation) governs the conditional system note and its authorization limits.
 
 ## Direct MCP calls in code mode
 
@@ -474,7 +474,7 @@ event, or as an errored SSE body after it, rather than as a retryable fetch
 failure, so HTTP fallback cannot duplicate that inference. The one exception is a
 socket that closed or errored before any Responses event on a provider that opted
 into `retryOnReset`: the passthrough dispatch may spend the request's replacement
-grant on one HTTP send (see [ambiguous-resend gate](responses-failover.md#ambiguous-resend-gate)).
+grant on one HTTP send (see [ambiguous-resend gate](responses-failover.md#ambiguous-resend-gate)). An authoritative upstream refusal before any output is not one of those ambiguous settles (#6969). On an opt-in exchange (`preOutputRefusalHold`, set only by the native Pool dispatch and its alternate-account send, never with native control) empty `response.created`/`response.in_progress`/`response.queued` frames are queued without committing for at most 10 s and never past half of `connectTimeoutMs` after the send started, with the prelude headers frozen at the first one. A bare `error` frame with a single transient 5xx wrapper status (or, with no wrapper alias, the recognized overload class), or an empty `response.failed` of the overload class, then settles as a replayable gateway status of that status. Quota or rate-limit identities, 4xx frames, stream ids, conflicting response ids or competing aliases never qualify, and message text can only veto. Any other settle during the hold — output, an unqualified frame, socket death, silence, abort, size limits, the hold deadline — first commits the queued preamble, so it is the same committed body failure it was before. The dispatch restores a surviving projection to the original event stream (byte for byte, same markers and stage record) right after its Pool block.
 A standalone no-response
 exchange has a 90-second prelude deadline in addition to the upgrade deadline.
 That prelude deadline is a ceiling, not a floor: the exchange runs under the

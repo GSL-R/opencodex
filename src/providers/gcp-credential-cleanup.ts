@@ -1,4 +1,4 @@
-import { mutatePersistedConfig } from "../config";
+import { mutatePersistedConfig, readConfigAdmissionSnapshot } from "../config";
 import { GCP_CREDENTIAL_MARKER_PREFIX, gcpCredentialMarkerAccount } from "../lib/gcp-adc";
 import type { OcxProviderConfig } from "../types";
 import { isKeychainReference, keychainAccount, providerKeychainEntry } from "./api-key-resolve";
@@ -7,6 +7,14 @@ import { isKeychainReference, keychainAccount, providerKeychainEntry } from "./a
 export function providerGcpCredentialMarkers(provider: OcxProviderConfig): string[] {
   return [...new Set([provider.apiKey, ...(provider.apiKeyPool ?? []).map(entry => entry.key)]
     .filter((key): key is string => typeof key === "string" && key.startsWith(GCP_CREDENTIAL_MARKER_PREFIX)))];
+}
+
+/** Capture both the caller's row and the valid durable row before a provider mutation. */
+export function snapshotProviderGcpCredentialMarkers(name: string, provider: OcxProviderConfig | undefined): string[] {
+  const durable = readConfigAdmissionSnapshot();
+  const durableProvider = durable.kind === "read" && durable.diagnostics.source === "file"
+    && durable.diagnostics.error === null ? durable.diagnostics.config.providers[name] : undefined;
+  return [provider, durableProvider].flatMap(row => row ? providerGcpCredentialMarkers(row) : []);
 }
 
 /** After a successful config commit, remove only credentials no persisted provider references. */

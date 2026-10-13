@@ -28,6 +28,7 @@ Persisted config, the Codex home it writes into, and the model catalog it publis
 | [`codex-home.md`](codex-home.md) | CODEX_HOME resolution, the files opencodex manages there, and Codex-home diagnostics. |
 | [`codex-prompts.md`](codex-prompts.md) | Prompt-layer repair, base import previews and bounded text-probe sources. |
 | [`catalog.md`](catalog.md) | Shared Codex catalog assembly, account namespaces, pool rotation, and effort ladders. |
+| [`catalog-effort-clamp.md`](catalog-effort-clamp.md) | Persisted effort-clamp observation identity and idempotent sync notices. |
 | [`subagents.md`](subagents.md) | Multi-agent surface mode and subagent roster ordering. |
 | [`config-proxy.md`](config-proxy.md) | Global proxy activation, start flags, and credential-safe CLI output. |
 
@@ -98,6 +99,7 @@ Background service, docs, release, and design discipline.
 | --- | --- |
 | [`desktop-shell.md`](desktop-shell.md) | Tauri desktop shell, proxy attachment and sidecar lifecycle, tray controls, bootstrap navigation, and desktop companion presence. |
 | [`desktop-terminal-command.md`](desktop-terminal-command.md) | Desktop-owned ocx command on PATH: record and journal, POSIX shim and shell blocks, Windows user Path, private-path ACL policy, and the local Terminal command page. |
+| [`desktop-start-at-login.md`](desktop-start-at-login.md) | macOS tray Start at Login judgment shared with Startup safety, its parity fixture, click rules, and the guarded launch-origin migration. |
 | [`ops/service-and-sidecars.md`](ops/service-and-sidecars.md) | Service install/repair, platform launchers, tray, and sidecar processes. |
 | [`ops/service-health-recovery.md`](ops/service-health-recovery.md) | Opt-in sentinel that turns a hung but listening managed service proxy into an exit its manager restarts. |
 | [`ops/plugins.md`](ops/plugins.md) | Plugin loading from OPENCODEX_HOME/plugins and the upstream rewrite slot plugins attach to. |
@@ -121,6 +123,9 @@ A source area can be described by more than one doc, because these docs are orga
 | `desktop/src-tauri/src/cli_command_posix.rs` | [`desktop-terminal-command.md`](desktop-terminal-command.md) |
 | `desktop/src-tauri/src/cli_command_record.rs` | [`desktop-terminal-command.md`](desktop-terminal-command.md) |
 | `desktop/src-tauri/src/cli_command_windows.rs` | [`desktop-terminal-command.md`](desktop-terminal-command.md) |
+| `desktop/src-tauri/src/first_run.rs` | [`desktop-start-at-login.md`](desktop-start-at-login.md) |
+| `desktop/src-tauri/src/login_registration.rs` | [`desktop-start-at-login.md`](desktop-start-at-login.md) |
+| `desktop/src-tauri/src/tray_login.rs` | [`desktop-start-at-login.md`](desktop-start-at-login.md) |
 | `desktop/ui/cli.html` | [`desktop-terminal-command.md`](desktop-terminal-command.md) |
 | `desktop/ui/cli.js` | [`desktop-terminal-command.md`](desktop-terminal-command.md) |
 | `docs-site/` | [`ops/docs-and-release.md`](ops/docs-and-release.md) |
@@ -139,6 +144,8 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/client/` | [`runtime.md`](runtime.md)<br>[`clients/claude-desktop.md`](clients/claude-desktop.md) |
 | `src/clients/` | [`clients/integrations.md`](clients/integrations.md) |
 | `src/codex/` | [`runtime.md`](runtime.md)<br>[`config.md`](config.md)<br>[`codex-home.md`](codex-home.md)<br>[`codex-prompts.md`](codex-prompts.md)<br>[`catalog.md`](catalog.md)<br>[`subagents.md`](subagents.md)<br>[`transports/responses-failover.md`](transports/responses-failover.md)<br>[`providers/openai-tiers.md`](providers/openai-tiers.md)<br>[`providers/openai-accounts.md`](providers/openai-accounts.md)<br>[`gui-and-management-api.md`](gui-and-management-api.md)<br>[`dashboard-and-usage.md`](dashboard-and-usage.md)<br>[`clients/chatgpt-desktop.md`](clients/chatgpt-desktop.md)<br>[`ops/docs-and-release.md`](ops/docs-and-release.md) |
+| `src/codex/catalog/effort.ts` | [`catalog-effort-clamp.md`](catalog-effort-clamp.md) |
+| `src/codex/runtime.ts` | [`catalog-effort-clamp.md`](catalog-effort-clamp.md) |
 | `src/combos/` | [`runtime.md`](runtime.md)<br>[`providers-and-adapters.md`](providers-and-adapters.md)<br>[`providers/jev-decision.md`](providers/jev-decision.md) |
 | `src/companion/` | [`overview.md`](overview.md)<br>[`gui-and-management-api.md`](gui-and-management-api.md)<br>[`companion.md`](companion.md) |
 | `src/compatibility/` | [`runtime.md`](runtime.md)<br>[`adapters/compatibility-contracts.md`](adapters/compatibility-contracts.md) |
@@ -181,6 +188,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/service-manager-probe.ts` | [`ops/service-and-sidecars.md`](ops/service-and-sidecars.md) |
 | `src/service.ts` | [`runtime.md`](runtime.md)<br>[`ops/docs-and-release.md`](ops/docs-and-release.md) |
 | `src/service/` | [`runtime.md`](runtime.md) |
+| `src/service/desktop-startup.ts` | [`desktop-start-at-login.md`](desktop-start-at-login.md) |
 | `src/service/health-sentinel-launch.ts` | [`ops/service-health-recovery.md`](ops/service-health-recovery.md) |
 | `src/service/health-sentinel-main.ts` | [`ops/service-health-recovery.md`](ops/service-health-recovery.md) |
 | `src/service/health-sentinel-policy.ts` | [`ops/service-health-recovery.md`](ops/service-health-recovery.md) |

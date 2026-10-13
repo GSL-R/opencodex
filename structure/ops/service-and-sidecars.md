@@ -426,8 +426,8 @@ restart decision shares one `createSupervisionLatch()` from `src/service/desktop
 Plain unknown/unsupported evidence preserves existing decisions unless an earlier block remains.
 `src/update/runtime-ownership.mjs` denies all three update authorities and failed-update recovery
 when blocked. A restoration refusal after a completed package swap does not undo that update.
-Service install, repair, start and restart refuse before mutation, including Windows XML staging
-under injected Desktop evidence; production Windows probes remain unsupported. Limits are listed
+Service install, repair, start and restart refuse before mutation, including Windows XML staging,
+when live Desktop supervision is verified. Windows probes use bounded process snapshots; `ocx stop` shows the Desktop notice. Limits are listed
 in [desktop supervision](../desktop-shell.md#runtime-ownership-from-the-apps-side).
 The lease is released before any service-manager-mediated start (`service repair` in recovery
 or the post-install refresh): the manager's `ocx start` child cannot join it, and holding it
