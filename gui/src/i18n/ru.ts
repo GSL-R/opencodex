@@ -6,6 +6,13 @@ import type { TKey } from "./en";
  */
 export const ru: Record<TKey, string> = {
   ...desktopCompatibilityCopy("ru"),
+  "claude.tierDefaults.unset": "Не задано (сохранить настройку Claude)",
+  "claude.tierDefaults.recovery": "Применение остановлено, автоматическое восстановление не удалось. Проверьте резервную копию ниже перед повтором.",
+  "claude.tierDefaults.title": "Модели CLI по умолчанию",
+  "claude.tierDefaults.preview": "Предпросмотр настроек Claude",
+  "claude.tierDefaults.apply": "Применить к настройкам Claude",
+  "claude.tierDefaults.applied": "Настройки Claude соответствуют сохранённым значениям.",
+  "claude.tierDefaults.failed": "Не удалось применить значения. Повторите предпросмотр и проверьте настройки Claude.",
   "sidecar.pool": "Пул аккаунтов",
   "sidecar.poolCurrent": "Пул текущего запроса",
   "sidecar.poolA": "Anthropic",

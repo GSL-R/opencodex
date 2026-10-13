@@ -7,6 +7,13 @@ import type { TKey } from "./en";
  */
 export const tr: Record<TKey, string> = {
   ...desktopCompatibilityCopy("tr"),
+  "claude.tierDefaults.unset": "Belirtilmedi (mevcut Claude ayarını koru)",
+  "claude.tierDefaults.recovery": "Uygulama durdu ve otomatik geri yükleme başarısız oldu. Yeniden denemeden önce aşağıdaki yedeği kontrol edin.",
+  "claude.tierDefaults.title": "CLI varsayılan modelleri",
+  "claude.tierDefaults.preview": "Claude ayarlarını önizle",
+  "claude.tierDefaults.apply": "Claude ayarlarına uygula",
+  "claude.tierDefaults.applied": "Claude ayarları kaydedilen varsayılanlarla eşleşiyor.",
+  "claude.tierDefaults.failed": "Varsayılanlar uygulanamadı. Yeniden önizleyin ve Claude ayarlarını kontrol edin.",
   "sidecar.pool": "Hesap havuzu",
   "sidecar.poolCurrent": "Geçerli isteğin havuzu",
   "sidecar.poolA": "Anthropic",

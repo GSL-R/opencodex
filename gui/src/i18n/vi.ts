@@ -8,6 +8,13 @@ import type { TKey } from "./en";
  */
 export const vi: Record<TKey, string> = {
   ...desktopCompatibilityCopy("vi"),
+  "claude.tierDefaults.unset": "Chưa đặt (giữ cài đặt Claude hiện có)",
+  "claude.tierDefaults.recovery": "Đã dừng áp dụng và khôi phục tự động thất bại. Kiểm tra bản sao lưu bên dưới trước khi thử lại.",
+  "claude.tierDefaults.title": "Mô hình mặc định CLI",
+  "claude.tierDefaults.preview": "Xem trước cài đặt Claude",
+  "claude.tierDefaults.apply": "Áp dụng vào cài đặt Claude",
+  "claude.tierDefaults.applied": "Cài đặt Claude khớp với mặc định đã lưu.",
+  "claude.tierDefaults.failed": "Không thể áp dụng mặc định. Xem trước lại và kiểm tra cài đặt Claude.",
   "sidecar.pool": "Nhóm tài khoản",
   "sidecar.poolCurrent": "Nhóm của yêu cầu hiện tại",
   "sidecar.poolA": "Anthropic",

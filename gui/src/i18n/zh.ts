@@ -6,6 +6,13 @@ import type { TKey } from "./en";
  */
 export const zh: Record<TKey, string> = {
   ...desktopCompatibilityCopy("zh"),
+  "claude.tierDefaults.unset": "未设置（保留现有 Claude 设置）",
+  "claude.tierDefaults.recovery": "应用已停止，自动恢复失败。重试前请检查下方备份。",
+  "claude.tierDefaults.title": "CLI 层级默认模型",
+  "claude.tierDefaults.preview": "预览 Claude 设置",
+  "claude.tierDefaults.apply": "应用到 Claude 设置",
+  "claude.tierDefaults.applied": "Claude 设置与保存的默认值一致。",
+  "claude.tierDefaults.failed": "无法应用默认值。请重新预览并检查 Claude 设置。",
   "sidecar.pool": "账户池",
   "sidecar.poolCurrent": "使用当前请求的账户池",
   "sidecar.poolA": "Anthropic",

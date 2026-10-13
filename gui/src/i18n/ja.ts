@@ -6,6 +6,13 @@ import type { TKey } from "./en";
  */
 export const ja: Record<TKey, string> = {
   ...desktopCompatibilityCopy("ja"),
+  "claude.tierDefaults.unset": "未指定（既存のClaude設定を維持）",
+  "claude.tierDefaults.recovery": "適用が停止し、自動復元に失敗しました。再試行する前に以下のバックアップを確認してください。",
+  "claude.tierDefaults.title": "CLIのティア既定モデル",
+  "claude.tierDefaults.preview": "Claude設定をプレビュー",
+  "claude.tierDefaults.apply": "Claude設定に適用",
+  "claude.tierDefaults.applied": "Claude設定は保存済みの既定値と一致しています。",
+  "claude.tierDefaults.failed": "既定値を適用できませんでした。再度プレビューしてClaude設定を確認してください。",
   "sidecar.pool": "アカウントプール",
   "sidecar.poolCurrent": "現在のリクエストのプール",
   "sidecar.poolA": "Anthropic",

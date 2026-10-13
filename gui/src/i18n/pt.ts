@@ -8,6 +8,13 @@ import type { TKey } from "./en";
  */
 export const pt: Record<TKey, string> = {
   ...desktopCompatibilityCopy("pt"),
+  "claude.tierDefaults.unset": "Não definido (manter configuração Claude)",
+  "claude.tierDefaults.recovery": "Aplicação interrompida; restauração automática falhou. Verifique o backup abaixo antes de tentar novamente.",
+  "claude.tierDefaults.title": "Modelos padrão da CLI",
+  "claude.tierDefaults.preview": "Prévia das configurações Claude",
+  "claude.tierDefaults.apply": "Aplicar às configurações Claude",
+  "claude.tierDefaults.applied": "As configurações Claude correspondem aos padrões salvos.",
+  "claude.tierDefaults.failed": "Não foi possível aplicar os padrões. Veja a prévia novamente e confira as configurações Claude.",
   "sidecar.pool": "Pool de contas",
   "sidecar.poolCurrent": "Pool da solicitação atual",
   "sidecar.poolA": "Anthropic",
