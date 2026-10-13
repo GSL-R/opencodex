@@ -4,6 +4,7 @@
 
 `src/lib/gcp-adc.ts` resolves an explicit `gcp-sa:<account>` through the OS credential store.
 An empty or whitespace-only account is rejected before token resolution; it never selects host ADC.
+Post-commit cleanup skips empty or whitespace-only GCP marker accounts in both persisted references and captured removal candidates, so one malformed marker cannot block valid-account retention or cleanup. Request-time marker validation remains strict.
 `src/providers/api-keys.ts` stores pasted credential JSON as markers, including multiple JSON objects
 in one atomic pool update. Verified OS writes and marker persistence share the cleanup mutation
 lock. Rebased callbacks repeat idempotent writes before committing; failed batches remove only

@@ -17,6 +17,11 @@ export function snapshotProviderGcpCredentialMarkers(name: string, provider: Ocx
   return [provider, durableProvider].flatMap(row => row ? providerGcpCredentialMarkers(row) : []);
 }
 
+function cleanupGcpCredentialAccount(key: string | undefined): string | undefined {
+  if (key?.startsWith(GCP_CREDENTIAL_MARKER_PREFIX) && !key.slice(GCP_CREDENTIAL_MARKER_PREFIX.length).trim()) return undefined;
+  return gcpCredentialMarkerAccount(key);
+}
+
 /** After a successful config commit, remove only credentials no persisted provider references. */
 export function cleanupRemovedGcpCredentials(markers: readonly string[]): void {
   if (!markers.length) return;
@@ -27,11 +32,11 @@ export function cleanupRemovedGcpCredentials(markers: readonly string[]): void {
       const retained = new Set(Object.values(fresh.providers).flatMap(provider =>
         [provider.apiKey, ...(provider.apiKeyPool ?? []).map(entry => entry.key)]
           .flatMap(key => {
-            const account = isKeychainReference(key) ? keychainAccount(key) : gcpCredentialMarkerAccount(key);
+            const account = isKeychainReference(key) ? keychainAccount(key) : cleanupGcpCredentialAccount(key);
             return account === undefined ? [] : [account];
           })));
       for (const marker of new Set(markers)) {
-        const account = gcpCredentialMarkerAccount(marker);
+        const account = cleanupGcpCredentialAccount(marker);
         if (account && !retained.has(account)) providerKeychainEntry(account).deletePassword();
       }
       return { changed: false, value: true };

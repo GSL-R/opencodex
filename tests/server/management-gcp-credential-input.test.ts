@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { saveConfig, loadConfig } from "../../src/config";
 import * as configModule from "../../src/config";
 import { addProviderApiKey, removeProviderApiKey } from "../../src/providers/api-keys";
-import { snapshotProviderGcpCredentialMarkers } from "../../src/providers/gcp-credential-cleanup";
+import { cleanupRemovedGcpCredentials, snapshotProviderGcpCredentialMarkers } from "../../src/providers/gcp-credential-cleanup";
 import { setProviderKeychainEntryFactoryForTests, storeProviderKeyInKeychain, restoreProviderKeyFromKeychain, providerKeyStoreKind } from "../../src/providers/key-store";
 import { handleProviderRoutes } from "../../src/server/management/provider-routes";
 import { handleProviderCommand } from "../../src/cli/provider";
@@ -67,6 +67,43 @@ test.each(["", "{not-json"])("management credential snapshot ignores an invalid 
   expect(snapshotProviderGcpCredentialMarkers("relay", live)).toEqual(["gcp-sa:live"]);
   expect(readFileSync(join(home, "config.json"), "utf8")).toBe(raw);
   expect(secrets.size).toBe(0);
+});
+
+test.each(["gcp-sa:", "gcp-sa:   "])("cleanup skips malformed persisted markers without blocking valid cleanup: %j", malformed => {
+  expect(addProviderApiKey(config, "relay", credential)).toHaveProperty("id");
+  const retained = config.providers.relay!.apiKey!;
+  config.providers.removed = { adapter: "openai-chat", baseUrl: "https://relay.example/v1" };
+  saveConfig(config);
+  expect(addProviderApiKey(config, "removed", JSON.stringify({ ...JSON.parse(credential), client_id: "removed-client" }))).toHaveProperty("id");
+  const removed = config.providers.removed!.apiKey!;
+  delete config.providers.removed;
+  config.providers.unrelated = { adapter: "openai-chat", baseUrl: "https://relay.example/v1", apiKey: malformed,
+    apiKeyPool: [{ id: "bad", key: malformed }] };
+  saveConfig(config);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  cleanupRemovedGcpCredentials([removed, retained]);
+  expect(secrets.size).toBe(1);
+  expect([...secrets.values()]).toEqual([credential]);
+  expect(loadConfig().providers.unrelated!.apiKey).toBe(malformed);
+  expect(warn).not.toHaveBeenCalled();
+});
+
+test.each(["gcp-sa:", "gcp-sa:   "])("cleanup skips malformed captured markers and preserves keychain aliases: %j", malformed => {
+  expect(addProviderApiKey(config, "relay", credential)).toHaveProperty("id");
+  const retained = config.providers.relay!.apiKey!;
+  config.providers.removed = { adapter: "openai-chat", baseUrl: "https://relay.example/v1" };
+  saveConfig(config);
+  expect(addProviderApiKey(config, "removed", JSON.stringify({ ...JSON.parse(credential), client_id: "removed-client" }))).toHaveProperty("id");
+  const removed = config.providers.removed!.apiKey!;
+  delete config.providers.removed;
+  config.providers.relay!.apiKey = `keychain:${retained.slice("gcp-sa:".length)}`;
+  delete config.providers.relay!.apiKeyPool;
+  saveConfig(config);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  cleanupRemovedGcpCredentials([malformed, removed, retained]);
+  expect(secrets.size).toBe(1);
+  expect([...secrets.values()]).toEqual([credential]);
+  expect(warn).not.toHaveBeenCalled();
 });
 
 test.each([
