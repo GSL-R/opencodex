@@ -139,8 +139,8 @@ export const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
   { method: "POST", path: "/api/native-main-profiles/switch", module: "codex/native-profile-api", mutates: true },
   // server/management/agent-settings-routes
   { method: "GET", path: "/api/claude-code", module: "server/management/agent-settings-routes", mutates: false },
-  { method: "GET", path: "/api/claude-code/model-defaults", module: "server/management/agent-settings-routes", mutates: false },
-  { method: "POST", path: "/api/claude-code/model-defaults", module: "server/management/agent-settings-routes", mutates: true },
+  { method: "GET", path: "/api/claude-code/model-defaults", module: "server/management/agent-settings-routes", mutates: false, exempt: { reason: "interactive-preview", why: "Preview half of the GUI-only Claude Code tier-default apply; the fingerprint it returns is the only input POST accepts, and no terminal confirmation workflow exists yet." } },
+  { method: "POST", path: "/api/claude-code/model-defaults", module: "server/management/agent-settings-routes", mutates: true, exempt: { reason: "interactive-preview", why: "Apply half of the GUI-only Claude Code tier-default preview; it writes the shared Claude settings only for a fingerprint the dashboard preview produced." } },
   { method: "GET", path: "/api/claude-desktop", module: "server/management/agent-settings-routes", mutates: false },
   { method: "GET", path: "/api/claude-desktop/status", module: "server/management/agent-settings-routes", mutates: false },
   { method: "GET", path: "/api/codex-auth/features/default-mode-request-user-input", module: "server/management/agent-settings-routes", mutates: false },
